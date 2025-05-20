@@ -1,0 +1,53 @@
+{
+  "name": "amplifyquery",
+  "version": "1.0.0",
+  "description": "Amplify+Query",
+  "keywords": [
+    "Amplify",
+    "React Query",
+    "TypeScript"
+  ],
+  "homepage": "https://github.com/Sun-Woo-Kim/AmplifyQuery#readme",
+  "bugs": {
+    "url": "https://github.com/Sun-Woo-Kim/AmplifyQuery/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sun-Woo-Kim/AmplifyQuery.git"
+  },
+  "license": "MIT",
+  "author": "Sun-Woo-Kim",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "dev": "tsc --watch",
+    "prepare": "npm run build",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@aws-amplify/api": "^6.3.11",
+    "@aws-amplify/core": "^6.11.4",
+    "@aws-amplify/datastore": "^5.0.82",
+    "@babel/core": "^7.27.1",
+    "@react-native-async-storage/async-storage": "^2.1.2",
+    "@tanstack/react-query": "^5.76.1",
+    "@tanstack/react-query-persist-client": "^5.76.1",
+    "@types/react": "^19.1.4",
+    "amplify": "^0.0.11",
+    "aws-amplify": "^6.14.4",
+    "expo": "^53.0.9",
+    "expo-crypto": "^14.1.4",
+    "expo-file-system": "^18.1.10",
+    "react": "^19.1.0",
+    "react-native": "^0.79.2",
+    "react-native-mmkv": "^3.2.0",
+    "typescript": "^5.8.3",
+    "zustand": "^5.0.4"
+  }
+}
