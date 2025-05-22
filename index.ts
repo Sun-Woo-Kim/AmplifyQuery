@@ -2,6 +2,7 @@ import { setClient, getClient } from "./client";
 import {
   configure as configureQuery,
   queryClient,
+  getQueryClient,
   createQueryKeys,
   invalidateModel,
   invalidateModelItem,
@@ -66,6 +67,7 @@ export * from "./types";
 // Export query client
 export {
   queryClient,
+  getQueryClient,
   invalidateModel,
   invalidateModelItem,
   invalidateModelByField,
@@ -76,6 +78,9 @@ export {
 
 // Export client functions
 export { getClient };
+
+// Export provider
+export * from "./provider";
 
 // Re-export utility services
 export const Utils = UtilsHelper;
@@ -96,4 +101,5 @@ export const AmplifyQuery = {
   Storage: StorageServiceUtil,
   Auth: AuthServiceUtil,
   getModelIds,
+  getQueryClient,
 };

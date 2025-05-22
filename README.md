@@ -50,7 +50,67 @@ AmplifyQuery.configure({
 });
 ```
 
-### 2. Service Creation
+### 2. Setup Provider (Important!)
+
+Wrap your application with `AmplifyQueryProvider` at the root level. This provides the React Query client context to your components.
+
+```tsx
+// App.tsx or your main application file
+import React from "react";
+import { AmplifyQueryProvider } from "amplifyquery"; // Or from 'amplifyquery/provider'
+import YourApp from "./YourApp"; // Your main application component
+
+function App() {
+  return (
+    <AmplifyQueryProvider>
+      <YourApp />
+    </AmplifyQueryProvider>
+  );
+}
+
+export default App;
+```
+
+Alternatively, if you need to use a custom `QueryClient` instance:
+
+```tsx
+// App.tsx or your main application file
+import React from "react";
+import { createCustomQueryProvider, getQueryClient } from "amplifyquery"; // Or from 'amplifyquery/provider'
+import { QueryClient } from "@tanstack/react-query";
+import YourApp from "./YourApp"; // Your main application component
+
+// Create a custom client (optional)
+const customQueryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Your custom query client options
+      staleTime: 1000 * 60 * 10, // 10 minutes
+    },
+  },
+});
+
+// Create a provider with your custom client, or use the default
+const MyCustomProvider = createCustomQueryProvider(customQueryClient);
+// const MyDefaultProvider = createCustomQueryProvider(); // Uses the default client configured via AmplifyQuery.configure()
+
+function App() {
+  return (
+    // Use your custom provider
+    <MyCustomProvider>
+      <YourApp />
+    </MyCustomProvider>
+    // Or, if using the default client with createCustomQueryProvider:
+    // <MyDefaultProvider>
+    //   <YourApp />
+    // </MyDefaultProvider>
+  );
+}
+
+export default App;
+```
+
+### 3. Service Creation
 
 ```typescript
 import { AmplifyQuery } from "amplifyquery";
@@ -73,7 +133,7 @@ const UserSettingsService =
   AmplifyQuery.createSingletonService<UserSettingsModel>("UserSettings");
 ```
 
-### 3. Data Fetching and Saving
+### 4. Data Fetching and Saving
 
 ```typescript
 // Fetch all items
@@ -104,7 +164,7 @@ await TodoService.update({
 await TodoService.delete("some-id");
 ```
 
-### 4. Using React Hooks
+### 5. Using React Hooks
 
 ```tsx
 import React from "react";

@@ -94,6 +94,14 @@ function createMmkvPersister() {
 export let queryClient = new QueryClient(config.queryClientConfig);
 
 /**
+ * Get the current query client instance
+ * @returns The QueryClient instance
+ */
+export function getQueryClient(): QueryClient {
+  return queryClient;
+}
+
+/**
  * AmplifyQuery configuration
  * @param options Configuration options
  */
