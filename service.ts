@@ -683,6 +683,22 @@ export function createAmplifyService<T extends BaseModel>(
             `[Auth: ${authMode}]`
           );
 
+          // Debug: Check if model and query exist
+          const client = getClient();
+          console.log(`🍬 Debug - client.models exists:`, !!client.models);
+          console.log(
+            `🍬 Debug - client.models[${modelName}] exists:`,
+            !!client.models[modelName]
+          );
+          console.log(
+            `🍬 Debug - client.models[${modelName}][${ownerQueryName}] exists:`,
+            !!(client.models as any)[modelName]?.[ownerQueryName]
+          );
+          console.log(
+            `🍬 Debug - Available methods for ${modelName}:`,
+            Object.keys((client.models as any)[modelName] || {})
+          );
+
           // Execute owner query
           const { data: result } = await (getClient().models as any)[modelName][
             ownerQueryName
@@ -732,7 +748,12 @@ export function createAmplifyService<T extends BaseModel>(
 
           return filteredItems;
         } catch (error) {
-          if ((error as any)?.message?.includes("not found")) {
+          // Check if the error is because the owner query doesn't exist
+          if (
+            (error as any)?.message?.includes("not found") ||
+            (error as any)?.message?.includes("is not a function") ||
+            (error as any)?.message?.includes("is undefined")
+          ) {
             console.warn(
               `🍬 ${ownerQueryName} query not found. Trying default list query...`
             );
