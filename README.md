@@ -359,7 +359,6 @@ const AdminTodoService = AmplifyQuery.createAmplifyService<TodoModel>(
 );
 
 TodoService.setAuthMode("apiKey");
-
 await TodoService.list({ authMode: "iam" });
 const adminTodoService = TodoService.withAuthMode("iam");
 ```
