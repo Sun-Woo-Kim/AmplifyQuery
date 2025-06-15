@@ -361,10 +361,7 @@ const AdminTodoService = AmplifyQuery.createAmplifyService<TodoModel>(
 // Set authentication mode for an existing service
 TodoService.setAuthMode("apiKey");
 
-// Apply authentication mode to a specific request
 await TodoService.list({ authMode: "iam" });
-
-// Get a new service instance with a specific auth mode applied
 const adminTodoService = TodoService.withAuthMode("iam");
 ```
 
