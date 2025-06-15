@@ -1,5 +1,5 @@
 name: Publish package to npm
-on: [push, pull_request]
+on: []
 
 jobs:
   build:
