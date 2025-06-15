@@ -25,10 +25,15 @@ module.exports = {
         writerOpts: {
           // 커밋 객체를 변환하는 함수
           transform: (commit) => {
-            // 기본 'angular' 프리셋은 특정 타입(feat, fix 등)만 보여줌
-            // 모든 커밋이 릴리즈 노트에 포함되도록 타입을 'fix'로 강제 할당
-            commit.type = "fix";
-            return commit;
+            // commit 객체는 직접 수정할 수 없으므로, 복사본을 만들어 수정합니다.
+            const newCommit = { ...commit };
+
+            // 모든 커밋이 릴리즈 노트에 포함되도록,
+            // 릴리즈 노트 생성기가 인식하는 'fix' 타입으로 강제 할당합니다.
+            // 이렇게 하면 모든 커밋이 "Bug Fixes" 섹션 아래에 표시됩니다.
+            newCommit.type = "fix";
+
+            return newCommit;
           },
         },
       },
