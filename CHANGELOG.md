@@ -1,3 +1,10 @@
+## [1.0.7](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.6...v1.0.7) (2025-06-15)
+
+
+### fix
+
+* fixREADME.md ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/11fbce7a02f6854a7bf79c50f96538b927ee40bb))
+
 ## [1.0.6](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.5...v1.0.6) (2025-06-15)
 
 
