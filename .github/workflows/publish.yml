@@ -25,19 +25,38 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && ( github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' )
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # merge-release가 commit history를 분석하기 위해 전체 히스토리 필요
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
       - name: Cache node_modules
         id: cache-modules
         uses: actions/cache@v4
         with:
           path: node_modules
           key: 22.x-${{ runner.OS }}-build-${{ hashFiles('package.json') }}
-      - name: Build
+
+      - name: Install dependencies
         if: steps.cache-modules.outputs.cache-hit != 'true'
         run: npm install
 
+      - name: Configure Git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
       - name: Publish
-        uses: mikeal/merge-release@master
+        uses: mikeal/merge-release@v4.3.0
+        timeout-minutes: 10
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
