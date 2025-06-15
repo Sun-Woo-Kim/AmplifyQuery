@@ -9,6 +9,7 @@ import {
   ModelHook,
 } from "./types";
 import { Utils } from "./utils";
+import { getOwnerQueryName, getDefaultAuthMode } from "./config";
 import {
   useQuery,
   useMutation,
@@ -220,17 +221,15 @@ function rollbackCache(
 /**
  * Create model-specific Amplify service
  * @param modelName Model name
- * @param queryMap Model-specific query name mapping (optional)
- * @param defaultAuthMode Default authentication mode (default: 'userPool')
+ * @param defaultAuthMode Default authentication mode (optional, uses global config if not provided)
  * @returns AmplifyDataService instance for the model
  */
 export function createAmplifyService<T extends BaseModel>(
   modelName: string,
-  queryMap?: Record<string, string>,
-  defaultAuthMode: AuthMode = "userPool"
+  defaultAuthMode?: AuthMode
 ): AmplifyDataService<T> {
-  // Track current authentication mode state
-  let currentAuthMode: AuthMode = defaultAuthMode;
+  // Track current authentication mode state - use global config if not provided
+  let currentAuthMode: AuthMode = defaultAuthMode || getDefaultAuthMode();
 
   // Create service object
   const service: AmplifyDataService<T> = {
@@ -670,9 +669,8 @@ export function createAmplifyService<T extends BaseModel>(
         // Get owner and parameters based on auth mode
         const { owner, authModeParams } = await getOwnerByAuthMode(authMode);
 
-        // Get owner-based query name, use default format if not found
-        const ownerQueryName =
-          queryMap?.[modelName] || `list${modelName}sByOwner`;
+        // Get owner-based query name from global config
+        const ownerQueryName = getOwnerQueryName(modelName);
 
         // Try query call
         try {

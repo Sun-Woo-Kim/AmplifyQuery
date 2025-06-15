@@ -9,6 +9,7 @@ A library that combines AWS Amplify and React Query, making it easier to manage 
 - 📱 **Offline Support**: Persistent query caching via MMKV for fast data loading even offline.
 - 🪝 **Convenient Hooks API**: Abstract complex data synchronization into simple Hooks.
 - 🛡 **Auth Mode Support**: Supports various AWS Amplify authentication modes (API Key, IAM, Cognito, etc.).
+- ⚙️ **Global Configuration**: Set model mappings and auth modes once - no more repetitive configuration.
 - ⚡ **Performance Optimized**: Maximize performance with request batching and intelligent caching.
 
 ## Installation
@@ -31,8 +32,23 @@ import { generateClient } from "aws-amplify/api";
 const client = generateClient();
 AmplifyQuery.configure({
   client,
+
+  // Global model owner query mapping (optional)
+  // Set once and all services will use it automatically
+  modelOwnerQueryMap: {
+    User: "listUserByOwner",
+    Project: "listProjectByOwner",
+    Todo: "listTodoByOwner",
+    Comment: "listCommentByOwner",
+    // Add your model mappings here
+  },
+
+  // Default authentication mode (optional)
+  defaultAuthMode: "userPool",
+
   // Caching options (optional)
   isCachingEnabled: true,
+
   // Customize Query Client configuration (optional)
   queryClientConfig: {
     defaultOptions: {
@@ -41,6 +57,7 @@ AmplifyQuery.configure({
       },
     },
   },
+
   // Storage configuration (optional)
   storage: {
     mmkvId: "my-app.cache", // MMKV store ID
@@ -125,12 +142,21 @@ interface TodoModel {
   updatedAt: string;
 }
 
-// Create Todo service
+// Create Todo service - automatically uses global modelOwnerQueryMap
 const TodoService = AmplifyQuery.createAmplifyService<TodoModel>("Todo");
 
-// Create Singleton service (for single-instance models)
+// Create service with custom auth mode (optional)
+const AdminTodoService = AmplifyQuery.createAmplifyService<TodoModel>(
+  "Todo",
+  "iam"
+);
+
+// Create Singleton service (for single-instance models like user settings)
 const UserSettingsService =
-  AmplifyQuery.createSingletonService<UserSettingsModel>("UserSettings");
+  AmplifyQuery.createSingletonService<UserSettingsModel>(
+    AmplifyQuery.createAmplifyService<UserSettingsModel>("UserSettings"),
+    AmplifyQuery.getModelIds.UserSettings
+  );
 ```
 
 ### 4. Data Fetching and Saving
@@ -213,6 +239,84 @@ function TodoScreen() {
 
 ## Advanced Features
 
+### Global Configuration
+
+AmplifyQuery supports global configuration to reduce code duplication and simplify service creation.
+
+```typescript
+// Set global model owner query mapping (can be done separately from configure)
+AmplifyQuery.setModelOwnerQueryMap({
+  User: "listUserByOwner",
+  Project: "listProjectByOwner",
+  Todo: "listTodoByOwner",
+  Comment: "listCommentByOwner",
+  Like: "listLikeByOwner",
+  // Add all your model mappings here
+});
+
+// Set global default auth mode
+AmplifyQuery.setDefaultAuthMode("userPool");
+
+// Now all services created will automatically use these settings
+const UserService = AmplifyQuery.createAmplifyService<User>("User");
+const ProjectService = AmplifyQuery.createAmplifyService<Project>("Project");
+const TodoService = AmplifyQuery.createAmplifyService<Todo>("Todo");
+
+// Get current global settings
+const currentQueryMap = AmplifyQuery.getModelOwnerQueryMap();
+const currentAuthMode = AmplifyQuery.getDefaultAuthMode();
+
+// Reset configuration (useful for testing)
+AmplifyQuery.resetConfig();
+```
+
+#### Migration from Previous Versions
+
+If you were previously passing `modelOwnerQueryMap` to each service, you can now simplify your code:
+
+**Before (repetitive):**
+
+```typescript
+const modelOwnerQueryMap = {
+  User: "listUserByOwner",
+  Project: "listProjectByOwner",
+  Todo: "listTodoByOwner",
+};
+
+// Had to pass queryMap to every service
+const UserService = AmplifyQuery.createAmplifyService<User>(
+  "User",
+  modelOwnerQueryMap
+);
+const ProjectService = AmplifyQuery.createAmplifyService<Project>(
+  "Project",
+  modelOwnerQueryMap
+);
+const TodoService = AmplifyQuery.createAmplifyService<Todo>(
+  "Todo",
+  modelOwnerQueryMap
+);
+```
+
+**After (clean):**
+
+```typescript
+// Set once globally
+AmplifyQuery.configure({
+  client,
+  modelOwnerQueryMap: {
+    User: "listUserByOwner",
+    Project: "listProjectByOwner",
+    Todo: "listTodoByOwner",
+  },
+});
+
+// Create services without repetition
+const UserService = AmplifyQuery.createAmplifyService<User>("User");
+const ProjectService = AmplifyQuery.createAmplifyService<Project>("Project");
+const TodoService = AmplifyQuery.createAmplifyService<Todo>("Todo");
+```
+
 ### Caching
 
 AmplifyQuery uses MMKV to persistently cache query results. This allows the app to display previous data immediately upon restart.
@@ -239,10 +343,22 @@ const todos = await TodoService.list({ forceRefresh: true });
 Access data with various authentication methods.
 
 ```typescript
-// Set global default authentication mode
-AmplifyQuery.configure({ client, defaultAuthMode: "userPool" });
+// Set global default authentication mode via configure
+AmplifyQuery.configure({
+  client,
+  defaultAuthMode: "userPool",
+});
 
-// Set authentication mode for a service
+// Or set it separately
+AmplifyQuery.setDefaultAuthMode("userPool");
+
+// Create service with custom auth mode
+const AdminTodoService = AmplifyQuery.createAmplifyService<TodoModel>(
+  "Todo",
+  "iam"
+);
+
+// Set authentication mode for an existing service
 TodoService.setAuthMode("apiKey");
 
 // Apply authentication mode to a specific request

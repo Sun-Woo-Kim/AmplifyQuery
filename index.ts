@@ -21,6 +21,13 @@ import {
   setAppUrl,
   getAppUrl,
 } from "./utils";
+import {
+  setModelOwnerQueryMap,
+  setDefaultAuthMode,
+  getModelOwnerQueryMap,
+  getDefaultAuthMode,
+  resetConfig,
+} from "./config";
 
 /**
  * Initialization function for the AmplifyQuery library.
@@ -49,6 +56,16 @@ export function configure(config: AmplifyQueryConfig): void {
   // Configure Amplify client
   if (config.client) {
     setClient(config.client);
+  }
+
+  // Set global model owner query mapping
+  if (config.modelOwnerQueryMap) {
+    setModelOwnerQueryMap(config.modelOwnerQueryMap);
+  }
+
+  // Set default auth mode
+  if (config.defaultAuthMode) {
+    setDefaultAuthMode(config.defaultAuthMode);
   }
 
   // Apply React Query settings
@@ -102,4 +119,10 @@ export const AmplifyQuery = {
   Auth: AuthServiceUtil,
   getModelIds,
   getQueryClient,
+  // Global configuration functions
+  setModelOwnerQueryMap,
+  getModelOwnerQueryMap,
+  setDefaultAuthMode,
+  getDefaultAuthMode,
+  resetConfig,
 };

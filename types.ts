@@ -175,6 +175,9 @@ export interface AmplifyQueryConfig {
   client: GraphQLClient;
   defaultAuthMode?: AuthMode;
 
+  // Model owner query mapping for global configuration
+  modelOwnerQueryMap?: Record<string, string>;
+
   // Add React Query caching related options
   isCachingEnabled?: boolean;
   queryClientConfig?: QueryClientConfig;
