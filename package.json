@@ -1,6 +1,6 @@
 {
   "name": "amplifyquery",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Amplify+Query",
   "keywords": [
     "Amplify",
@@ -31,7 +31,6 @@
     "typecheck": "expo-module typecheck",
     "prepare": "expo-module prepare",
     "prepublishOnly": "expo-module prepublishOnly",
-    "publish": "npm publish",
     "test": "expo-module test"
   },
   "devDependencies": {
