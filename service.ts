@@ -95,6 +95,19 @@ async function performOptimisticUpdate<T extends BaseModel>(
 ): Promise<Map<QueryKey, any>> {
   const previousDataMap = new Map<QueryKey, any>();
 
+  // 🔧 버그 수정: updateData의 ID와 요청한 ID가 일치하는지 검증
+  const updateDataId = updateData?.id;
+  if (
+    !updateDataId ||
+    typeof updateDataId !== "string" ||
+    updateDataId !== itemId
+  ) {
+    console.warn(
+      `🍬 ${modelName} performOptimisticUpdate: ID mismatch! Expected: ${itemId}, UpdateData ID: ${updateDataId}. Skipping optimistic update.`
+    );
+    return previousDataMap; // 빈 맵 반환으로 rollback 시 영향 없음
+  }
+
   // 1. Update individual item cache
   const singleItemQueryKey: QueryKey = [modelName, itemId];
   const previousItemSingle = queryClient.getQueryData<T>(singleItemQueryKey);
@@ -158,7 +171,20 @@ function handleCacheUpdateOnSuccess<T extends BaseModel>(
   updatedItem: T
 ) {
   // 1. Update individual item cache
-  queryClient.setQueryData<T>([modelName, itemId], updatedItem);
+  const actualItemId = (updatedItem as any)?.id;
+  // 🔧 버그 수정: 실제 아이템 ID와 요청한 ID가 일치하는지 검증
+  if (
+    actualItemId &&
+    typeof actualItemId === "string" &&
+    actualItemId === itemId
+  ) {
+    queryClient.setQueryData<T>([modelName, itemId], updatedItem);
+  } else {
+    console.warn(
+      `🍬 ${modelName} handleCacheUpdateOnSuccess: ID mismatch! Expected: ${itemId}, Actual: ${actualItemId}. Skipping cache update.`
+    );
+    return; // ID가 일치하지 않으면 캐시 업데이트 중단
+  }
 
   // 2. Update list query cache (with relational filtering applied)
   relatedQueryKeys.forEach((queryKey) => {
@@ -523,10 +549,17 @@ export function createAmplifyService<T extends BaseModel>(
 
               // Update individual item cache on API success
               if (createdItem) {
-                queryClient.setQueryData<T>(
-                  [modelName, createdItem.id],
-                  createdItem
-                );
+                const itemId = (createdItem as any)?.id;
+                // 🔧 버그 수정: ID가 유효한 경우에만 개별 캐시에 저장
+                if (itemId && typeof itemId === "string") {
+                  queryClient.setQueryData<T>([modelName, itemId], createdItem);
+                } else {
+                  console.warn(
+                    `🍬 ${modelName} createList: Invalid createdItem ID found, skipping cache update:`,
+                    itemId,
+                    createdItem
+                  );
+                }
               }
               return createdItem || newItem;
             } catch (error) {
@@ -591,7 +624,17 @@ export function createAmplifyService<T extends BaseModel>(
         if (!options.forceRefresh) {
           const cachedItem = queryClient.getQueryData<T>(singleItemQueryKey);
           if (cachedItem) {
-            return cachedItem;
+            // 🔧 버그 수정: 캐시된 아이템의 실제 ID가 요청한 ID와 일치하는지 검증
+            const itemId = (cachedItem as any)?.id;
+            if (itemId === id) {
+              return cachedItem;
+            } else {
+              // ID가 일치하지 않으면 캐시에서 제거하고 API 호출
+              console.warn(
+                `🍬 ${modelName} get: Cache ID mismatch! Requested: ${id}, Cached: ${itemId}. Removing invalid cache and fetching from API.`
+              );
+              queryClient.removeQueries({ queryKey: singleItemQueryKey });
+            }
           }
         }
 
@@ -609,32 +652,43 @@ export function createAmplifyService<T extends BaseModel>(
 
         // Update cache
         if (item) {
-          queryClient.setQueryData(singleItemQueryKey, item);
+          const itemId = (item as any)?.id;
+          // 🔧 버그 수정: API 응답 아이템의 ID가 요청한 ID와 일치하는지 검증
+          if (itemId && typeof itemId === "string" && itemId === id) {
+            queryClient.setQueryData(singleItemQueryKey, item);
 
-          // Update related list queries (lists that might contain this item)
-          const relatedQueryKeys = findRelatedQueryKeys(modelName, queryClient);
-          relatedQueryKeys.forEach((queryKey) => {
-            // Exclude single item keys, only process list queries
-            if (queryKey.length > 1 && queryKey[1] !== id) {
-              // Query keys with id as second element are not single item get query key format, so treat as list
-              queryClient.setQueryData(queryKey, (oldData: any) => {
-                const oldItems = Array.isArray(oldData) ? oldData : [];
-                const exists = oldItems.some(
-                  (oldItem: any) => oldItem && oldItem.id === id
-                );
-                if (exists) {
-                  return oldItems.map((oldItem: any) =>
-                    oldItem && oldItem.id === id ? item : oldItem
+            // Update related list queries (lists that might contain this item)
+            const relatedQueryKeys = findRelatedQueryKeys(
+              modelName,
+              queryClient
+            );
+            relatedQueryKeys.forEach((queryKey) => {
+              // Exclude single item keys, only process list queries
+              if (queryKey.length > 1 && queryKey[1] !== id) {
+                // Query keys with id as second element are not single item get query key format, so treat as list
+                queryClient.setQueryData(queryKey, (oldData: any) => {
+                  const oldItems = Array.isArray(oldData) ? oldData : [];
+                  const exists = oldItems.some(
+                    (oldItem: any) => oldItem && oldItem.id === id
                   );
-                } else {
-                  // Need to check if item matches list query filter conditions (not checking here)
-                  // If checking is difficult, invalidateQueries might be safer
-                  // Currently implemented to add item to all related lists that might contain it on API get success
-                  return [...oldItems, item];
-                }
-              });
-            }
-          });
+                  if (exists) {
+                    return oldItems.map((oldItem: any) =>
+                      oldItem && oldItem.id === id ? item : oldItem
+                    );
+                  } else {
+                    // Need to check if item matches list query filter conditions (not checking here)
+                    // If checking is difficult, invalidateQueries might be safer
+                    // Currently implemented to add item to all related lists that might contain it on API get success
+                    return [...oldItems, item];
+                  }
+                });
+              }
+            });
+          } else {
+            console.warn(
+              `🍬 ${modelName} get: API response ID mismatch! Requested: ${id}, API Response ID: ${itemId}. Skipping cache update.`
+            );
+          }
         }
 
         return item || null;
@@ -741,7 +795,17 @@ export function createAmplifyService<T extends BaseModel>(
 
           // Update individual item cache
           filteredItems.forEach((item: T) => {
-            queryClient.setQueryData([modelName, (item as any).id], item);
+            const itemId = (item as any)?.id;
+            // 🔧 버그 수정: ID가 유효한 경우에만 개별 캐시에 저장
+            if (itemId && typeof itemId === "string") {
+              queryClient.setQueryData([modelName, itemId], item);
+            } else {
+              console.warn(
+                `🍬 ${modelName} list: Invalid item ID found, skipping cache update:`,
+                itemId,
+                item
+              );
+            }
           });
 
           return filteredItems;
@@ -802,7 +866,17 @@ export function createAmplifyService<T extends BaseModel>(
 
             queryClient.setQueryData(queryKey, filteredItems);
             filteredItems.forEach((item: T) => {
-              queryClient.setQueryData([modelName, (item as any).id], item);
+              const itemId = (item as any)?.id;
+              // 🔧 버그 수정: ID가 유효한 경우에만 개별 캐시에 저장
+              if (itemId && typeof itemId === "string") {
+                queryClient.setQueryData([modelName, itemId], item);
+              } else {
+                console.warn(
+                  `🍬 ${modelName} list fallback: Invalid item ID found, skipping cache update:`,
+                  itemId,
+                  item
+                );
+              }
             });
 
             return filteredItems;
@@ -1355,7 +1429,17 @@ export function createAmplifyService<T extends BaseModel>(
 
         // Update individual item cache
         filteredItems.forEach((item: T) => {
-          queryClient.setQueryData([modelName, (item as any).id], item);
+          const itemId = (item as any)?.id;
+          // 🔧 버그 수정: ID가 유효한 경우에만 개별 캐시에 저장
+          if (itemId && typeof itemId === "string") {
+            queryClient.setQueryData([modelName, itemId], item);
+          } else {
+            console.warn(
+              `🍬 ${modelName} customList: Invalid item ID found, skipping cache update:`,
+              itemId,
+              item
+            );
+          }
         });
 
         return filteredItems;
@@ -1506,7 +1590,20 @@ export function createAmplifyService<T extends BaseModel>(
       const getItem = useCallback(
         (id: string): T | undefined => {
           // Use useQueryData to get latest single item from current cache
-          return hookQueryClient.getQueryData<T>([modelName, id]);
+          const cachedItem = hookQueryClient.getQueryData<T>([modelName, id]);
+          // 🔧 버그 수정: 캐시된 아이템의 ID가 요청한 ID와 일치하는지 검증
+          if (cachedItem) {
+            const itemId = (cachedItem as any)?.id;
+            if (itemId === id) {
+              return cachedItem;
+            } else {
+              console.warn(
+                `🍬 ${modelName} useHook.getItem: Cache ID mismatch! Requested: ${id}, Cached: ${itemId}. Returning undefined.`
+              );
+              return undefined;
+            }
+          }
+          return undefined;
         },
         [hookQueryClient, modelName]
       );
@@ -1601,7 +1698,17 @@ export function createAmplifyService<T extends BaseModel>(
       const singleItemQueryKey: QueryKey = [modelName, id];
 
       // First check data from cache
-      const cachedData = hookQueryClient.getQueryData<T>(singleItemQueryKey);
+      const rawCachedData = hookQueryClient.getQueryData<T>(singleItemQueryKey);
+      // 🔧 버그 수정: 캐시된 데이터의 ID가 요청한 ID와 일치하는지 검증
+      const cachedData =
+        rawCachedData && (rawCachedData as any)?.id === id
+          ? rawCachedData
+          : undefined;
+      if (rawCachedData && !cachedData) {
+        console.warn(
+          `🍬 ${modelName} useItemHook: Cache ID mismatch! Requested: ${id}, Cached: ${(rawCachedData as any)?.id}. Ignoring cached data.`
+        );
+      }
 
       // Single item query
       const {
