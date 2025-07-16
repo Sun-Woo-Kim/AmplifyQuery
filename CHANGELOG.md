@@ -1,3 +1,10 @@
+## [1.0.8](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.7...v1.0.8) (2025-07-16)
+
+
+### fix
+
+* 버그 수정: ID 검증 로직 추가로 캐시 업데이트 및 롤백 시 안정성 향상 ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/84865431e74327c9268b8cd5e1af7535fc5c1289))
+
 ## [1.0.7](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.6...v1.0.7) (2025-06-15)
 
 
