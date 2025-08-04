@@ -645,10 +645,19 @@ export function createAmplifyService<T extends BaseModel>(
         const { authModeParams } = await getOwnerByAuthMode(authMode);
 
         // API call - apply auth mode
-        const { data: item } = await (getClient().models as any)[modelName].get(
+        const { data: apiResponse } = await (getClient().models as any)[modelName].get(
           { id },
           authModeParams
         );
+
+        // Handle case where API returns array instead of single item
+        let item = apiResponse;
+        if (Array.isArray(apiResponse)) {
+          console.warn(
+            `🍬 ${modelName} get: API returned array instead of single item. Taking first item.`
+          );
+          item = apiResponse.find((i: any) => i?.id === id) || apiResponse[0] || null;
+        }
 
         // Update cache
         if (item) {

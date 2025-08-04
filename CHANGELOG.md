@@ -1,3 +1,11 @@
+## [1.0.9](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.8...v1.0.9) (2025-01-06)
+
+
+### fix
+
+* 버그 수정: useItemHook이 단일 아이템 대신 배열을 반환하는 문제 수정
+* API가 단일 아이템 대신 배열을 반환하는 경우 처리 로직 추가
+
 ## [1.0.8](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.7...v1.0.8) (2025-07-16)
 
 
