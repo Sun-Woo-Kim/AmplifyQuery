@@ -1,3 +1,11 @@
+## [1.0.9](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.8...v1.0.9) (2025-08-04)
+
+
+### fix
+
+* fix get query ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/adfd42a2679d3227541b55c9baeccfa142532839))
+* 서비스 파일에서 ID 검증 로직을 추가하여 캐시 업데이트 및 롤백 시 안정성을 향상시켰습니다. 코드 전반에 걸쳐 세미콜론을 추가하여 일관성을 유지했습니다. ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/660eab81b08bc77c98bf8be877f0476b8398350e))
+
 ## [1.0.9](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.8...v1.0.9) (2025-01-06)
 
 
