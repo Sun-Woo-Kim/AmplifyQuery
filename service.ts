@@ -1709,8 +1709,10 @@ export function createAmplifyService<T extends BaseModel>(
       const singleItemQueryKey: QueryKey = [modelName, id];
 
       // First check data from cache
-      const rawCachedData = hookQueryClient.getQueryData<T | T[]>(singleItemQueryKey);
-      
+      const rawCachedData = hookQueryClient.getQueryData<T | T[]>(
+        singleItemQueryKey,
+      );
+
       // 🔧 버그 수정: 배열이 캐시되어 있는 경우 처리
       let cachedData: T | undefined;
       if (Array.isArray(rawCachedData)) {
