@@ -1709,18 +1709,27 @@ export function createAmplifyService<T extends BaseModel>(
       const singleItemQueryKey: QueryKey = [modelName, id];
 
       // First check data from cache
-      const rawCachedData = hookQueryClient.getQueryData<T>(singleItemQueryKey);
-      // 🔧 버그 수정: 캐시된 데이터의 ID가 요청한 ID와 일치하는지 검증
-      const cachedData =
-        rawCachedData && (rawCachedData as any)?.id === id
-          ? rawCachedData
-          : undefined;
-      if (rawCachedData && !cachedData) {
+      const rawCachedData = hookQueryClient.getQueryData<T | T[]>(singleItemQueryKey);
+      
+      // 🔧 버그 수정: 배열이 캐시되어 있는 경우 처리
+      let cachedData: T | undefined;
+      if (Array.isArray(rawCachedData)) {
+        console.warn(
+          `🍬 ${modelName} useItemHook: Cache contains array instead of single item. Finding matching item.`,
+        );
+        const matchingItem = rawCachedData.find((item: any) => item?.id === id);
+        cachedData = matchingItem || undefined;
+        // 배열이 캐시되어 있으면 캐시를 제거하여 get 메서드가 다시 호출되도록 함
+        hookQueryClient.removeQueries({ queryKey: singleItemQueryKey });
+      } else if (rawCachedData && (rawCachedData as any)?.id === id) {
+        cachedData = rawCachedData as T;
+      } else if (rawCachedData) {
         console.warn(
           `🍬 ${modelName} useItemHook: Cache ID mismatch! Requested: ${id}, Cached: ${
             (rawCachedData as any)?.id
           }. Ignoring cached data.`,
         );
+        cachedData = undefined;
       }
 
       // Single item query
