@@ -1721,8 +1721,13 @@ export function createAmplifyService<T extends BaseModel>(
         );
         const matchingItem = rawCachedData.find((item: any) => item?.id === id);
         cachedData = matchingItem || undefined;
-        // 배열이 캐시되어 있으면 캐시를 제거하여 get 메서드가 다시 호출되도록 함
-        hookQueryClient.removeQueries({ queryKey: singleItemQueryKey });
+        // 배열이 캐시되어 있으면 조용히 캐시를 제거 (무한 루프 방지)
+        setTimeout(() => {
+          hookQueryClient.removeQueries({
+            queryKey: singleItemQueryKey,
+            exact: true,
+          });
+        }, 0);
       } else if (rawCachedData && (rawCachedData as any)?.id === id) {
         cachedData = rawCachedData as T;
       } else if (rawCachedData) {
@@ -1745,7 +1750,8 @@ export function createAmplifyService<T extends BaseModel>(
         queryFn: () => service.get(id),
         initialData: cachedData, // Use cached data as initial value if available
         staleTime: 1000 * 60, // Keep data "fresh" for 1 minute
-        refetchOnMount: "always", // Always attempt to refetch on mount
+        refetchOnMount: cachedData ? false : true, // Only refetch if no cached data
+        refetchOnWindowFocus: false, // Disable window focus refetch to prevent loops
         enabled: !!id, // Only enable query when id exists
       });
 
@@ -1801,6 +1807,18 @@ export function createAmplifyService<T extends BaseModel>(
 
       // Change loading state to false when isLoading is true and cached data exists
       const effectiveLoading = isLoading && !cachedData;
+
+      // 캐시 정리를 위한 효과 최적화 (한 번만 실행)
+      const shouldCleanCache = Array.isArray(rawCachedData);
+      if (shouldCleanCache && !isLoading) {
+        // 로딩이 완료된 후에만 캐시 정리 실행
+        setTimeout(() => {
+          const currentCache = hookQueryClient.getQueryData(singleItemQueryKey);
+          if (Array.isArray(currentCache)) {
+            hookQueryClient.setQueryData(singleItemQueryKey, item);
+          }
+        }, 100);
+      }
 
       return {
         item: item || null,
