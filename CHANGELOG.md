@@ -1,3 +1,11 @@
+## [1.0.11](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.10...v1.0.11) (2025-08-05)
+
+
+### fix
+
+* chore(release): 1.0.9 [skip ci] ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/f744942318b73d54691480fc5ebb42bcdbe8c1fa))
+* 캐시 제거 로직 최적화 및 refetch 조건 수정: 캐시가 존재할 경우 refetch를 비활성화하고, 로딩 완료 후 캐시 정리를 위한 효과를 추가했습니다. 무한 루프 방지를 위해 setTimeout을 사용하여 캐시를 조용히 제거하도록 개선했습니다. ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/94641e813224ac3bb674d7611c602519d0d8708a))
+
 ## [1.0.9](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.8...v1.0.9) (2025-08-04)
 
 
