@@ -307,7 +307,7 @@ export function createAmplifyService<T extends BaseModel>(
 
         const newItem = {
           ...cleanedData,
-          id: randomUUID(),
+          id: cleanedData.id || randomUUID(),
         } as T;
 
         // Extract relation fields (e.g., dailyId, userId)
@@ -466,7 +466,7 @@ export function createAmplifyService<T extends BaseModel>(
             });
             return {
               ...cleanedData,
-              id: randomUUID(),
+              id: cleanedData.id || randomUUID(),
             } as T;
           })
           .filter(Boolean) as T[];
