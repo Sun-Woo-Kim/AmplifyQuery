@@ -1,3 +1,10 @@
+## [1.0.12](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.11...v1.0.12) (2025-09-24)
+
+
+### fix
+
+* feat: update create function (include id) ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/72afd965e28d0f636050d9a93dca8974d5afe50b))
+
 ## [1.0.11](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.10...v1.0.11) (2025-08-05)
 
 
