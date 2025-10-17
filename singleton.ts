@@ -1,6 +1,7 @@
-import { AmplifyDataService, SingletonAmplifyService } from "./types";
+import { AmplifyDataService, SingletonAmplifyService, ItemHook } from "./types";
 import { getClient } from "./client";
 import { getCurrentUser } from "aws-amplify/auth";
+import { useQuery } from "@tanstack/react-query";
 
 /**
  * Function to create an extension service for singleton models
@@ -26,7 +27,7 @@ export function createSingletonService<T>(
         const modelId = await getModelId();
         return baseService.get(modelId, options);
       } catch (error) {
-        console.error(`${modelName} singleton instance lookup error:`, error);
+        // console.error(`${modelName} singleton instance lookup error:`, error);
         // Safely call getStore
         try {
           baseService
@@ -137,6 +138,43 @@ export function createSingletonService<T>(
         );
         return null;
       }
+    },
+
+    // React hook to manage the current singleton item
+    useCurrentHook: (): ItemHook<T> => {
+      // Resolve current singleton ID with React Query (object-style API)
+      const { data: currentId } = useQuery<
+        string | null,
+        Error,
+        string | null,
+        [string, string]
+      >({
+        queryKey: [modelName, "currentId"],
+        queryFn: async () => {
+          try {
+            const id = await getModelId();
+            return id || null;
+          } catch (error) {
+            // Safely call getStore to surface errors if available
+            try {
+              baseService
+                .getStore?.()
+                ?.setError?.(
+                  error instanceof Error ? error : new Error(String(error))
+                );
+            } catch (_storeError) {
+              // Ignore store errors
+            }
+            return null;
+          }
+        },
+        staleTime: 1000 * 60,
+        refetchOnWindowFocus: false,
+      });
+
+      // Delegate to base service's single item hook once ID is known
+      const resolvedId: string = currentId ?? "";
+      return baseService.useItemHook(resolvedId);
     },
   };
 

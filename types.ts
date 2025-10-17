@@ -148,6 +148,8 @@ export interface SingletonAmplifyService<T> extends AmplifyDataService<T> {
   getCurrent: (options?: { forceRefresh?: boolean }) => Promise<T | null>;
   updateCurrent: (data: Partial<T>) => Promise<T | null>;
   upsertCurrent: (data: Partial<T>) => Promise<T | null>;
+  // Hook for managing current singleton item
+  useCurrentHook: () => ItemHook<T>;
 }
 
 export interface BaseModel {
