@@ -1,3 +1,10 @@
+## [1.0.14](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.13...v1.0.14) (2025-10-17)
+
+
+### fix
+
+* feat: add query key helpers and refactor cache handling in service.ts ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/0457a65ab7472f1d30bfea680f3147feedc2418a))
+
 ## [1.0.13](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.12...v1.0.13) (2025-10-17)
 
 
