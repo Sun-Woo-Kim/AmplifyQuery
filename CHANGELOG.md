@@ -1,3 +1,10 @@
+## [1.0.13](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.12...v1.0.13) (2025-10-17)
+
+
+### fix
+
+* feat: add useCurrentHook ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/88bd1ec2c9354fbff186e1eaf3e30dc722d1fa45))
+
 ## [1.0.12](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.11...v1.0.12) (2025-09-24)
 
 
