@@ -23,6 +23,17 @@ import { getCurrentUser } from "aws-amplify/auth";
 import { randomUUID } from "expo-crypto";
 import { useCallback, useEffect, useMemo } from "react";
 
+// -------------------------------
+// Query key helpers
+// -------------------------------
+function itemKey(modelName: string, id: string): QueryKey {
+  return [modelName, "item", id];
+}
+
+function isItemKeyForModel(modelName: string, key: QueryKey): boolean {
+  return Array.isArray(key) && key[0] === modelName && key[1] === "item";
+}
+
 /**
  * Utility function to get owner value based on authentication mode
  * Sets owner value only in userPool auth mode, returns empty string for other auth modes
@@ -62,16 +73,21 @@ async function getOwnerByAuthMode(authMode: AuthMode): Promise<{
  */
 function findRelatedQueryKeys(
   modelName: string,
-  queryClient: QueryClient,
+  queryClient: QueryClient
 ): QueryKey[] {
   // Extract only query keys from Query objects array
   return queryClient
     .getQueryCache()
     .findAll({
       predicate: ({ queryKey }) => {
-        // Find all query keys starting with model name
-        // Example: ["Mission"], ["Mission", "filter", ...], ["Daily", dailyId, "Mission"]
-        return Array.isArray(queryKey) && queryKey[0] === modelName;
+        // Find all query keys for the model, but EXCLUDE single-item keys
+        // Examples kept: [model], [model, 'filter', ...], [model, 'query', ...], [model, Relation, id, ...]
+        // Excluded: [model, 'item', id]
+        return (
+          Array.isArray(queryKey) &&
+          queryKey[0] === modelName &&
+          !isItemKeyForModel(modelName, queryKey)
+        );
       },
     })
     .map((query) => query.queryKey);
@@ -91,7 +107,7 @@ async function performOptimisticUpdate<T extends BaseModel>(
   modelName: string,
   relatedQueryKeys: QueryKey[],
   itemId: string,
-  updateData: Partial<T> & { id: string },
+  updateData: Partial<T> & { id: string }
 ): Promise<Map<QueryKey, any>> {
   const previousDataMap = new Map<QueryKey, any>();
 
@@ -103,13 +119,13 @@ async function performOptimisticUpdate<T extends BaseModel>(
     updateDataId !== itemId
   ) {
     console.warn(
-      `🍬 ${modelName} performOptimisticUpdate: ID mismatch! Expected: ${itemId}, UpdateData ID: ${updateDataId}. Skipping optimistic update.`,
+      `🍬 ${modelName} performOptimisticUpdate: ID mismatch! Expected: ${itemId}, UpdateData ID: ${updateDataId}. Skipping optimistic update.`
     );
     return previousDataMap; // 빈 맵 반환으로 rollback 시 영향 없음
   }
 
   // 1. Update individual item cache
-  const singleItemQueryKey: QueryKey = [modelName, itemId];
+  const singleItemQueryKey: QueryKey = itemKey(modelName, itemId);
   const previousItemSingle = queryClient.getQueryData<T>(singleItemQueryKey);
   previousDataMap.set(singleItemQueryKey, previousItemSingle);
 
@@ -132,7 +148,7 @@ async function performOptimisticUpdate<T extends BaseModel>(
         const oldItems = Array.isArray(oldData) ? oldData : [];
 
         const hasItem = oldItems.some(
-          (item: any) => item && (item as any).id === itemId,
+          (item: any) => item && (item as any).id === itemId
         );
 
         if (hasItem) {
@@ -140,7 +156,7 @@ async function performOptimisticUpdate<T extends BaseModel>(
           return oldItems.map((item: any) =>
             item && (item as any).id === itemId
               ? { ...item, ...updateData } // Apply optimistic update data
-              : item,
+              : item
           );
         } else if (optimisticData && queryKey.length < 3) {
           // Only consider adding created item for top-level list queries
@@ -168,7 +184,7 @@ function handleCacheUpdateOnSuccess<T extends BaseModel>(
   modelName: string,
   relatedQueryKeys: QueryKey[],
   itemId: string,
-  updatedItem: T,
+  updatedItem: T
 ) {
   // 1. Update individual item cache
   const actualItemId = (updatedItem as any)?.id;
@@ -178,10 +194,10 @@ function handleCacheUpdateOnSuccess<T extends BaseModel>(
     typeof actualItemId === "string" &&
     actualItemId === itemId
   ) {
-    queryClient.setQueryData<T>([modelName, itemId], updatedItem);
+    queryClient.setQueryData<T>(itemKey(modelName, itemId), updatedItem);
   } else {
     console.warn(
-      `🍬 ${modelName} handleCacheUpdateOnSuccess: ID mismatch! Expected: ${itemId}, Actual: ${actualItemId}. Skipping cache update.`,
+      `🍬 ${modelName} handleCacheUpdateOnSuccess: ID mismatch! Expected: ${itemId}, Actual: ${actualItemId}. Skipping cache update.`
     );
     return; // ID가 일치하지 않으면 캐시 업데이트 중단
   }
@@ -214,13 +230,13 @@ function handleCacheUpdateOnSuccess<T extends BaseModel>(
     queryClient.setQueryData(queryKey, (oldData: any) => {
       const oldItems = Array.isArray(oldData) ? oldData : [];
       const hasItem = oldItems.some(
-        (item: any) => item && (item as any).id === itemId,
+        (item: any) => item && (item as any).id === itemId
       );
 
       if (hasItem) {
         // Update if existing item found
         return oldItems.map((item: any) =>
-          item && (item as any).id === itemId ? updatedItem : item,
+          item && (item as any).id === itemId ? updatedItem : item
         );
       } else {
         // Add if successfully created (already filtered in relational queries)
@@ -237,7 +253,7 @@ function handleCacheUpdateOnSuccess<T extends BaseModel>(
  */
 function rollbackCache(
   queryClient: QueryClient,
-  previousDataMap: Map<QueryKey, any>,
+  previousDataMap: Map<QueryKey, any>
 ) {
   previousDataMap.forEach((previousData, queryKey) => {
     queryClient.setQueryData(queryKey, previousData);
@@ -252,7 +268,7 @@ function rollbackCache(
  */
 export function createAmplifyService<T extends BaseModel>(
   modelName: string,
-  defaultAuthMode?: AuthMode,
+  defaultAuthMode?: AuthMode
 ): AmplifyDataService<T> {
   // Track current authentication mode state - use global config if not provided
   let currentAuthMode: AuthMode = defaultAuthMode || getDefaultAuthMode();
@@ -283,7 +299,7 @@ export function createAmplifyService<T extends BaseModel>(
     // Create item
     create: async (
       data: Partial<T>,
-      options?: AuthOptions,
+      options?: AuthOptions
     ): Promise<T | null> => {
       try {
         if (!data) {
@@ -326,7 +342,7 @@ export function createAmplifyService<T extends BaseModel>(
         const previousDataMap = new Map<QueryKey, any>();
 
         // Update individual item cache
-        const singleItemQueryKey: QueryKey = [modelName, newItem.id];
+        const singleItemQueryKey: QueryKey = itemKey(modelName, newItem.id);
         const previousItemSingle =
           queryClient.getQueryData<T>(singleItemQueryKey);
         previousDataMap.set(singleItemQueryKey, previousItemSingle);
@@ -380,7 +396,7 @@ export function createAmplifyService<T extends BaseModel>(
           // Attempt API call - apply auth mode
           console.log(
             `🍬 ${modelName} creation attempt [Auth: ${authMode}]:`,
-            newItem.id,
+            newItem.id
           );
           const { data: createdItem } = await (getClient().models as any)[
             modelName
@@ -416,14 +432,14 @@ export function createAmplifyService<T extends BaseModel>(
 
           // Keep optimistic update data even if no API response
           console.warn(
-            `🍬 ${modelName} creation API no response. Keeping optimistic update data.`,
+            `🍬 ${modelName} creation API no response. Keeping optimistic update data.`
           );
           return newItem;
         } catch (apiError) {
           // Rollback and log error on API failure
           console.error(
             `🍬 ${modelName} creation error, performing rollback:`,
-            apiError,
+            apiError
           );
           rollbackCache(queryClient, previousDataMap);
           // Re-throw error for caller to handle
@@ -438,7 +454,7 @@ export function createAmplifyService<T extends BaseModel>(
     // Batch create items
     createList: async (
       dataList: Partial<T>[],
-      options?: AuthOptions,
+      options?: AuthOptions
     ): Promise<(T | null)[]> => {
       try {
         if (!dataList || dataList.length === 0) {
@@ -456,7 +472,7 @@ export function createAmplifyService<T extends BaseModel>(
             if (!data) return null;
             const dataWithoutOwner = Utils.removeOwnerField(
               data as any,
-              "create",
+              "create"
             );
             const cleanedData: Record<string, any> = {};
             Object.entries(dataWithoutOwner).forEach(([key, value]) => {
@@ -464,6 +480,7 @@ export function createAmplifyService<T extends BaseModel>(
                 cleanedData[key] = value;
               }
             });
+
             return {
               ...cleanedData,
               id: cleanedData.id || randomUUID(),
@@ -486,7 +503,7 @@ export function createAmplifyService<T extends BaseModel>(
         }
 
         console.log(
-          `🍬 ${modelName} batch creation attempt: ${preparedItems.length} items`,
+          `🍬 ${modelName} batch creation attempt: ${preparedItems.length} items`
         );
 
         // Batch optimistic update - with relation filtering
@@ -511,7 +528,7 @@ export function createAmplifyService<T extends BaseModel>(
 
               // Filter new items that belong to this relation ID
               const itemsToAdd = preparedItems.filter(
-                (newItem: any) => newItem[relationField] === relationId,
+                (newItem: any) => newItem[relationField] === relationId
               );
 
               // Merge existing items with filtered new items
@@ -532,7 +549,7 @@ export function createAmplifyService<T extends BaseModel>(
 
         // Update individual item caches
         preparedItems.forEach((item) => {
-          const singleItemQueryKey: QueryKey = [modelName, item.id];
+          const singleItemQueryKey: QueryKey = itemKey(modelName, item.id);
           const previousItemSingle =
             queryClient.getQueryData<T>(singleItemQueryKey);
           previousDataMap.set(singleItemQueryKey, previousItemSingle);
@@ -552,12 +569,15 @@ export function createAmplifyService<T extends BaseModel>(
                 const itemId = (createdItem as any)?.id;
                 // 🔧 버그 수정: ID가 유효한 경우에만 개별 캐시에 저장
                 if (itemId && typeof itemId === "string") {
-                  queryClient.setQueryData<T>([modelName, itemId], createdItem);
+                  queryClient.setQueryData<T>(
+                    itemKey(modelName, itemId),
+                    createdItem
+                  );
                 } else {
                   console.warn(
                     `🍬 ${modelName} createList: Invalid createdItem ID found, skipping cache update:`,
                     itemId,
-                    createdItem,
+                    createdItem
                   );
                 }
               }
@@ -565,7 +585,7 @@ export function createAmplifyService<T extends BaseModel>(
             } catch (error) {
               console.error(
                 `🍬 ${modelName} batch creation failed for ID ${newItem.id}:`,
-                error,
+                error
               );
               return newItem;
             }
@@ -573,7 +593,7 @@ export function createAmplifyService<T extends BaseModel>(
 
           const results = await Promise.all(createPromises);
           console.log(
-            `🍬 ${modelName} batch creation completed: ${results.length} items`,
+            `🍬 ${modelName} batch creation completed: ${results.length} items`
           );
 
           // After creation, invalidate all related queries to ensure exact server data
@@ -601,7 +621,7 @@ export function createAmplifyService<T extends BaseModel>(
         } catch (apiError) {
           console.error(
             `🍬 ${modelName} batch creation API error, performing rollback:`,
-            apiError,
+            apiError
           );
           rollbackCache(queryClient, previousDataMap);
           throw apiError;
@@ -615,10 +635,10 @@ export function createAmplifyService<T extends BaseModel>(
     // Get item
     get: async (
       id: string,
-      options = { forceRefresh: false },
+      options = { forceRefresh: false }
     ): Promise<T | null> => {
       try {
-        const singleItemQueryKey: QueryKey = [modelName, id];
+        const singleItemQueryKey: QueryKey = itemKey(modelName, id);
 
         // Check cache first (if forceRefresh is false)
         if (!options.forceRefresh) {
@@ -631,7 +651,7 @@ export function createAmplifyService<T extends BaseModel>(
             } else {
               // ID가 일치하지 않으면 캐시에서 제거하고 API 호출
               console.warn(
-                `🍬 ${modelName} get: Cache ID mismatch! Requested: ${id}, Cached: ${itemId}. Removing invalid cache and fetching from API.`,
+                `🍬 ${modelName} get: Cache ID mismatch! Requested: ${id}, Cached: ${itemId}. Removing invalid cache and fetching from API.`
               );
               queryClient.removeQueries({ queryKey: singleItemQueryKey });
             }
@@ -653,7 +673,7 @@ export function createAmplifyService<T extends BaseModel>(
         let item = apiResponse;
         if (Array.isArray(apiResponse)) {
           console.warn(
-            `🍬 ${modelName} get: API returned array instead of single item. Taking first item.`,
+            `🍬 ${modelName} get: API returned array instead of single item. Taking first item.`
           );
           item =
             apiResponse.find((i: any) => i?.id === id) ||
@@ -671,7 +691,7 @@ export function createAmplifyService<T extends BaseModel>(
             // Update related list queries (lists that might contain this item)
             const relatedQueryKeys = findRelatedQueryKeys(
               modelName,
-              queryClient,
+              queryClient
             );
             relatedQueryKeys.forEach((queryKey) => {
               // Exclude single item keys, only process list queries
@@ -680,11 +700,11 @@ export function createAmplifyService<T extends BaseModel>(
                 queryClient.setQueryData(queryKey, (oldData: any) => {
                   const oldItems = Array.isArray(oldData) ? oldData : [];
                   const exists = oldItems.some(
-                    (oldItem: any) => oldItem && oldItem.id === id,
+                    (oldItem: any) => oldItem && oldItem.id === id
                   );
                   if (exists) {
                     return oldItems.map((oldItem: any) =>
-                      oldItem && oldItem.id === id ? item : oldItem,
+                      oldItem && oldItem.id === id ? item : oldItem
                     );
                   } else {
                     // Need to check if item matches list query filter conditions (not checking here)
@@ -697,7 +717,7 @@ export function createAmplifyService<T extends BaseModel>(
             });
           } else {
             console.warn(
-              `🍬 ${modelName} get: API response ID mismatch! Requested: ${id}, API Response ID: ${itemId}. Skipping cache update.`,
+              `🍬 ${modelName} get: API response ID mismatch! Requested: ${id}, API Response ID: ${itemId}. Skipping cache update.`
             );
           }
         }
@@ -711,7 +731,7 @@ export function createAmplifyService<T extends BaseModel>(
 
     // Batch get items
     list: async (
-      options = { filter: undefined, forceRefresh: false },
+      options = { filter: undefined, forceRefresh: false }
     ): Promise<T[]> => {
       try {
         // Determine query key
@@ -743,7 +763,7 @@ export function createAmplifyService<T extends BaseModel>(
             `🍬 ${modelName} list API call`,
             queryKey,
             `by ${ownerQueryName}`,
-            `[Auth: ${authMode}]`,
+            `[Auth: ${authMode}]`
           );
 
           // Debug: Check if model and query exist
@@ -751,15 +771,15 @@ export function createAmplifyService<T extends BaseModel>(
           console.log(`🍬 Debug - client.models exists:`, !!client.models);
           console.log(
             `🍬 Debug - client.models[${modelName}] exists:`,
-            !!client.models[modelName],
+            !!client.models[modelName]
           );
           console.log(
             `🍬 Debug - client.models[${modelName}][${ownerQueryName}] exists:`,
-            !!(client.models as any)[modelName]?.[ownerQueryName],
+            !!(client.models as any)[modelName]?.[ownerQueryName]
           );
           console.log(
             `🍬 Debug - Available methods for ${modelName}:`,
-            Object.keys((client.models as any)[modelName] || {}),
+            Object.keys((client.models as any)[modelName] || {})
           );
 
           // Execute owner query
@@ -769,7 +789,7 @@ export function createAmplifyService<T extends BaseModel>(
 
           // Extract result data + filter null values
           const items = (result?.items || result?.data || result || []).filter(
-            (item: any) => item !== null,
+            (item: any) => item !== null
           );
 
           // Apply filter (if client-side filtering needed)
@@ -809,12 +829,12 @@ export function createAmplifyService<T extends BaseModel>(
             const itemId = (item as any)?.id;
             // 🔧 버그 수정: ID가 유효한 경우에만 개별 캐시에 저장
             if (itemId && typeof itemId === "string") {
-              queryClient.setQueryData([modelName, itemId], item);
+              queryClient.setQueryData(itemKey(modelName, itemId), item);
             } else {
               console.warn(
                 `🍬 ${modelName} list: Invalid item ID found, skipping cache update:`,
                 itemId,
-                item,
+                item
               );
             }
           });
@@ -828,7 +848,7 @@ export function createAmplifyService<T extends BaseModel>(
             (error as any)?.message?.includes("is undefined")
           ) {
             console.warn(
-              `🍬 ${ownerQueryName} query not found. Trying default list query...`,
+              `🍬 ${ownerQueryName} query not found. Trying default list query...`
             );
             // Try default list query if owner query not found
             const { data: result } = await (getClient().models as any)[
@@ -858,7 +878,7 @@ export function createAmplifyService<T extends BaseModel>(
                     if ("lt" in value) return itemValue < (value as any).lt;
                     if ("contains" in value)
                       return String(itemValue).includes(
-                        (value as any).contains,
+                        (value as any).contains
                       );
                     if (
                       "between" in value &&
@@ -880,12 +900,12 @@ export function createAmplifyService<T extends BaseModel>(
               const itemId = (item as any)?.id;
               // 🔧 버그 수정: ID가 유효한 경우에만 개별 캐시에 저장
               if (itemId && typeof itemId === "string") {
-                queryClient.setQueryData([modelName, itemId], item);
+                queryClient.setQueryData(itemKey(modelName, itemId), item);
               } else {
                 console.warn(
                   `🍬 ${modelName} list fallback: Invalid item ID found, skipping cache update:`,
                   itemId,
-                  item,
+                  item
                 );
               }
             });
@@ -911,12 +931,12 @@ export function createAmplifyService<T extends BaseModel>(
     // Update item (modified to use helper functions)
     update: async (
       data: Partial<T> & { id: string },
-      options?: AuthOptions,
+      options?: AuthOptions
     ): Promise<T | null> => {
       try {
         if (!data?.id) {
           console.error(
-            `🍬 ${modelName} update error: No valid data or id provided.`,
+            `🍬 ${modelName} update error: No valid data or id provided.`
           );
           return null;
         }
@@ -947,14 +967,14 @@ export function createAmplifyService<T extends BaseModel>(
           modelName,
           relatedQueryKeys,
           itemId,
-          cleanedData as Partial<T> & { id: string },
+          cleanedData as Partial<T> & { id: string }
         );
 
         try {
           // Attempt API call - apply auth mode
           console.log(
             `🍬 ${modelName} update attempt [Auth: ${authMode}]:`,
-            itemId,
+            itemId
           );
           const { data: updatedItem } = await (getClient().models as any)[
             modelName
@@ -967,7 +987,7 @@ export function createAmplifyService<T extends BaseModel>(
               modelName,
               relatedQueryKeys,
               itemId,
-              updatedItem,
+              updatedItem
             );
 
             // Invalidate all related queries to automatically fetch new data
@@ -980,10 +1000,10 @@ export function createAmplifyService<T extends BaseModel>(
             return updatedItem;
           } else {
             console.warn(
-              `🍬 ${modelName} update API response missing. Maintaining optimistic update data.`,
+              `🍬 ${modelName} update API response missing. Maintaining optimistic update data.`
             );
             // If no API response, return the data saved during optimistic update
-            const singleItemQueryKey: QueryKey = [modelName, itemId];
+            const singleItemQueryKey: QueryKey = itemKey(modelName, itemId);
             return (
               (previousDataMap.get(singleItemQueryKey) as T | undefined) || null
             );
@@ -992,7 +1012,7 @@ export function createAmplifyService<T extends BaseModel>(
           // Rollback and log error on API failure
           console.error(
             `🍬 ${modelName} update error, performing rollback:`,
-            apiError,
+            apiError
           );
           rollbackCache(queryClient, previousDataMap);
           throw apiError;
@@ -1024,7 +1044,7 @@ export function createAmplifyService<T extends BaseModel>(
         const previousDataMap = new Map<QueryKey, any>();
 
         // Backup previous data and perform optimistic update for individual item (set to null)
-        const singleItemQueryKey: QueryKey = [modelName, id];
+        const singleItemQueryKey: QueryKey = itemKey(modelName, id);
         const previousItemSingle =
           queryClient.getQueryData<T>(singleItemQueryKey);
         previousDataMap.set(singleItemQueryKey, previousItemSingle);
@@ -1049,11 +1069,11 @@ export function createAmplifyService<T extends BaseModel>(
           // API call - apply auth mode
           console.log(
             `🍬 ${modelName} delete attempt [Auth: ${authMode}]:`,
-            id,
+            id
           );
           await (getClient().models as any)[modelName].delete(
             { id },
-            authModeParams,
+            authModeParams
           );
           console.log(`🍬 ${modelName} delete success:`, id);
 
@@ -1068,7 +1088,7 @@ export function createAmplifyService<T extends BaseModel>(
           // Rollback on API error
           console.error(
             `🍬 ${modelName} delete API error, performing rollback:`,
-            error,
+            error
           );
           rollbackCache(queryClient, previousDataMap);
           throw error;
@@ -1082,7 +1102,7 @@ export function createAmplifyService<T extends BaseModel>(
     // Batch delete multiple items (consider applying helper functions)
     deleteList: async (
       ids: string[],
-      options?: AuthOptions,
+      options?: AuthOptions
     ): Promise<{ success: string[]; failed: string[] }> => {
       try {
         const results = {
@@ -1092,7 +1112,7 @@ export function createAmplifyService<T extends BaseModel>(
 
         if (!ids || ids.length === 0) {
           console.warn(
-            `🍬 ${modelName} batch delete: Empty ID array provided.`,
+            `🍬 ${modelName} batch delete: Empty ID array provided.`
           );
           return results;
         }
@@ -1111,7 +1131,7 @@ export function createAmplifyService<T extends BaseModel>(
         // Optimistic update - remove items from all caches
         ids.forEach((id) => {
           // Backup previous data and perform optimistic update for individual item (null)
-          const singleItemQueryKey: QueryKey = [modelName, id];
+          const singleItemQueryKey: QueryKey = itemKey(modelName, id);
           const previousItemSingle =
             queryClient.getQueryData<T>(singleItemQueryKey);
           previousItemsCache.set(id, previousItemSingle || null);
@@ -1130,7 +1150,7 @@ export function createAmplifyService<T extends BaseModel>(
             queryClient.setQueryData(queryKey, (oldData: any) => {
               const oldItems = Array.isArray(oldData) ? oldData : [];
               return oldItems.filter(
-                (item: any) => item && !ids.includes((item as any).id),
+                (item: any) => item && !ids.includes((item as any).id)
               );
             });
           }
@@ -1138,21 +1158,21 @@ export function createAmplifyService<T extends BaseModel>(
 
         try {
           console.log(
-            `🍬 ${modelName} batch delete attempt [Auth: ${authMode}]: ${ids.length} items`,
+            `🍬 ${modelName} batch delete attempt [Auth: ${authMode}]: ${ids.length} items`
           );
           // Parallel API calls - apply auth mode
           const deletePromises = ids.map(async (id) => {
             try {
               await (getClient().models as any)[modelName].delete(
                 { id },
-                authModeParams,
+                authModeParams
               );
               results.success.push(id);
               return { id, success: true };
             } catch (error) {
               console.error(
                 `🍬 ${modelName} batch delete failed for ID ${id}:`,
-                error,
+                error
               );
               results.failed.push(id);
               return { id, success: false, error };
@@ -1164,7 +1184,7 @@ export function createAmplifyService<T extends BaseModel>(
           // If there are failed items, rollback only those items
           if (results.failed.length > 0) {
             console.warn(
-              `🍬 ${modelName} batch delete: ${results.failed.length} items failed, performing partial rollback`,
+              `🍬 ${modelName} batch delete: ${results.failed.length} items failed, performing partial rollback`
             );
 
             for (const failedId of results.failed) {
@@ -1172,7 +1192,10 @@ export function createAmplifyService<T extends BaseModel>(
               const previousItem = previousItemsCache.get(failedId);
               if (previousItem !== undefined) {
                 // Restore if not undefined (was in cache)
-                const singleItemQueryKey: QueryKey = [modelName, failedId];
+                const singleItemQueryKey: QueryKey = itemKey(
+                  modelName,
+                  failedId
+                );
                 queryClient.setQueryData(singleItemQueryKey, previousItem);
               }
 
@@ -1203,21 +1226,21 @@ export function createAmplifyService<T extends BaseModel>(
 
           // Invalidate all related queries to force refresh (safety mechanism)
           relatedQueryKeys.forEach((queryKey) =>
-            queryClient.invalidateQueries({ queryKey }),
+            queryClient.invalidateQueries({ queryKey })
           );
           ids.forEach((id) =>
-            queryClient.invalidateQueries({ queryKey: [modelName, id] }),
+            queryClient.invalidateQueries({ queryKey: itemKey(modelName, id) })
           );
 
           console.log(
-            `🍬 ${modelName} batch delete: ${results.success.length} items deleted, ${results.failed.length} items failed`,
+            `🍬 ${modelName} batch delete: ${results.success.length} items deleted, ${results.failed.length} items failed`
           );
           return results;
         } catch (generalError) {
           // General error occurred, performing full rollback
           console.error(
             `🍬 ${modelName} batch delete: General error occurred, performing full rollback:`,
-            generalError,
+            generalError
           );
           rollbackCache(queryClient, previousDataMap);
           // Invalidate all queries when a broad error occurs
@@ -1234,12 +1257,12 @@ export function createAmplifyService<T extends BaseModel>(
     // Create or update (modified to use helper functions)
     upsert: async (
       data: Partial<T> & { id: string },
-      options?: AuthOptions,
+      options?: AuthOptions
     ): Promise<T | null> => {
       try {
         if (!data?.id) {
           console.error(
-            `🍬 ${modelName} upsert error: No valid data or id provided.`,
+            `🍬 ${modelName} upsert error: No valid data or id provided.`
           );
           return null;
         }
@@ -1272,7 +1295,7 @@ export function createAmplifyService<T extends BaseModel>(
           modelName,
           relatedQueryKeys,
           data.id,
-          cleanedData as Partial<T> & { id: string },
+          cleanedData as Partial<T> & { id: string }
         );
 
         try {
@@ -1280,7 +1303,7 @@ export function createAmplifyService<T extends BaseModel>(
             // Use update logic if item exists - apply auth mode
             console.log(
               `🍬 ${modelName} upsert(update) attempt [Auth: ${authMode}]:`,
-              data.id,
+              data.id
             );
             const { data: updatedItem } = await (getClient().models as any)[
               modelName
@@ -1291,15 +1314,15 @@ export function createAmplifyService<T extends BaseModel>(
                 modelName,
                 relatedQueryKeys,
                 data.id,
-                updatedItem,
+                updatedItem
               );
               console.log(`🍬 ${modelName} upsert(update) success:`, data.id);
               return updatedItem;
             } else {
               console.warn(
-                `🍬 ${modelName} upsert(update) no API response. Keeping optimistic update data.`,
+                `🍬 ${modelName} upsert(update) no API response. Keeping optimistic update data.`
               );
-              const singleItemQueryKey: QueryKey = [modelName, data.id];
+              const singleItemQueryKey: QueryKey = itemKey(modelName, data.id);
               return (
                 (previousDataMap.get(singleItemQueryKey) as T | undefined) ||
                 null
@@ -1309,7 +1332,7 @@ export function createAmplifyService<T extends BaseModel>(
             // Use create logic if item doesn't exist - apply auth mode
             console.log(
               `🍬 ${modelName} upsert(create) attempt [Auth: ${authMode}]:`,
-              data.id,
+              data.id
             );
             const { data: createdItem } = await (getClient().models as any)[
               modelName
@@ -1320,15 +1343,15 @@ export function createAmplifyService<T extends BaseModel>(
                 modelName,
                 relatedQueryKeys,
                 data.id,
-                createdItem,
+                createdItem
               );
               console.log(`🍬 ${modelName} upsert(create) success:`, data.id);
               return createdItem;
             } else {
               console.warn(
-                `🍬 ${modelName} upsert(create) no API response. Keeping optimistic update data.`,
+                `🍬 ${modelName} upsert(create) no API response. Keeping optimistic update data.`
               );
-              const singleItemQueryKey: QueryKey = [modelName, data.id];
+              const singleItemQueryKey: QueryKey = itemKey(modelName, data.id);
               return (
                 (previousDataMap.get(singleItemQueryKey) as T | undefined) ||
                 null
@@ -1339,7 +1362,7 @@ export function createAmplifyService<T extends BaseModel>(
           // Rollback and log error on API error
           console.error(
             `🍬 ${modelName} upsert error, performing rollback:`,
-            apiError,
+            apiError
           );
           rollbackCache(queryClient, previousDataMap);
           throw apiError;
@@ -1354,7 +1377,7 @@ export function createAmplifyService<T extends BaseModel>(
     customList: async (
       queryName: string,
       args: Record<string, any>,
-      options = { forceRefresh: false },
+      options = { forceRefresh: false }
     ): Promise<T[]> => {
       try {
         // Determine auth mode (use provided options if available)
@@ -1375,7 +1398,7 @@ export function createAmplifyService<T extends BaseModel>(
 
         // Detect relational query (if fields like dailyId, userId exist)
         const relationField = Object.keys(enhancedArgs).find((key) =>
-          key.endsWith("Id"),
+          key.endsWith("Id")
         );
         const isRelationalQuery = !!relationField;
         const relationId = isRelationalQuery
@@ -1411,7 +1434,7 @@ export function createAmplifyService<T extends BaseModel>(
         console.log(
           `🍬 ${modelName} customList call [Auth: ${authMode}]:`,
           queryName,
-          enhancedArgs,
+          enhancedArgs
         );
 
         // Check if index query method exists
@@ -1429,7 +1452,7 @@ export function createAmplifyService<T extends BaseModel>(
         console.log(
           `🍬 ${modelName} ${queryName} result:`,
           items.length,
-          "items",
+          "items"
         );
 
         // Filter null values
@@ -1443,12 +1466,12 @@ export function createAmplifyService<T extends BaseModel>(
           const itemId = (item as any)?.id;
           // 🔧 버그 수정: ID가 유효한 경우에만 개별 캐시에 저장
           if (itemId && typeof itemId === "string") {
-            queryClient.setQueryData([modelName, itemId], item);
+            queryClient.setQueryData(itemKey(modelName, itemId), item);
           } else {
             console.warn(
               `🍬 ${modelName} customList: Invalid item ID found, skipping cache update:`,
               itemId,
-              item,
+              item
             );
           }
         });
@@ -1460,7 +1483,7 @@ export function createAmplifyService<T extends BaseModel>(
         // For relational queries, only invalidate related query
         if (typeof args === "object") {
           const relationField = Object.keys(args).find((key) =>
-            key.endsWith("Id"),
+            key.endsWith("Id")
           );
           if (relationField) {
             const relationName = relationField
@@ -1494,7 +1517,7 @@ export function createAmplifyService<T extends BaseModel>(
       // Note: This function is not directly supported in TanStack Query
       // If needed, connect to Zustand store implementation here
       console.warn(
-        `🍬 ${modelName}.getStore() is not directly supported in TanStack Query.`,
+        `🍬 ${modelName}.getStore() is not directly supported in TanStack Query.`
       );
       // Return empty object temporarily or throw error
       return {} as any; // or throw new Error("getStore is not supported in TanStack Query implementation");
@@ -1553,12 +1576,12 @@ export function createAmplifyService<T extends BaseModel>(
               `🍬 ${modelName} useHook customList call:`,
               options.customList.queryName,
               options.customList.args,
-              options.customList.forceRefresh,
+              options.customList.forceRefresh
             );
             return service.customList(
               options.customList.queryName,
               options.customList.args,
-              { forceRefresh: options.customList.forceRefresh },
+              { forceRefresh: options.customList.forceRefresh }
             );
           }
 
@@ -1577,7 +1600,7 @@ export function createAmplifyService<T extends BaseModel>(
           options?.customList?.args,
           options?.customList?.forceRefresh,
           service,
-        ],
+        ]
       );
 
       const queryOptions: UseQueryOptions<T[], Error, T[], QueryKey> = {
@@ -1601,7 +1624,9 @@ export function createAmplifyService<T extends BaseModel>(
       const getItem = useCallback(
         (id: string): T | undefined => {
           // Use useQueryData to get latest single item from current cache
-          const cachedItem = hookQueryClient.getQueryData<T>([modelName, id]);
+          const cachedItem = hookQueryClient.getQueryData<T>(
+            itemKey(modelName, id)
+          );
           // 🔧 버그 수정: 캐시된 아이템의 ID가 요청한 ID와 일치하는지 검증
           if (cachedItem) {
             const itemId = (cachedItem as any)?.id;
@@ -1609,14 +1634,14 @@ export function createAmplifyService<T extends BaseModel>(
               return cachedItem;
             } else {
               console.warn(
-                `🍬 ${modelName} useHook.getItem: Cache ID mismatch! Requested: ${id}, Cached: ${itemId}. Returning undefined.`,
+                `🍬 ${modelName} useHook.getItem: Cache ID mismatch! Requested: ${id}, Cached: ${itemId}. Returning undefined.`
               );
               return undefined;
             }
           }
           return undefined;
         },
-        [hookQueryClient, modelName],
+        [hookQueryClient, modelName]
       );
 
       const createItem = useCallback(
@@ -1631,7 +1656,7 @@ export function createAmplifyService<T extends BaseModel>(
             throw _error; // Re-throw error
           }
         },
-        [service, refetch], // Add refetch dependency
+        [service, refetch] // Add refetch dependency
       );
 
       const updateItem = useCallback(
@@ -1646,7 +1671,7 @@ export function createAmplifyService<T extends BaseModel>(
             throw _error;
           }
         },
-        [service, refetch], // Add refetch dependency
+        [service, refetch] // Add refetch dependency
       );
 
       const deleteItem = useCallback(
@@ -1661,7 +1686,7 @@ export function createAmplifyService<T extends BaseModel>(
             throw error;
           }
         },
-        [service, refetch], // refetch dependency added
+        [service, refetch] // refetch dependency added
       );
 
       const refresh = useCallback(
@@ -1670,14 +1695,14 @@ export function createAmplifyService<T extends BaseModel>(
           const { data } = await refetch({ throwOnError: true }); // Throw on error
           return data || [];
         },
-        [refetch, queryKey],
+        [refetch, queryKey]
       );
 
       const customListFn = useCallback(
         async (
           queryName: string,
           args: Record<string, any>,
-          options?: { forceRefresh?: boolean },
+          options?: { forceRefresh?: boolean }
         ): Promise<T[]> => {
           try {
             const result = await service.customList(queryName, args, options);
@@ -1687,7 +1712,7 @@ export function createAmplifyService<T extends BaseModel>(
             throw error;
           }
         },
-        [service],
+        [service]
       );
 
       return {
@@ -1706,18 +1731,18 @@ export function createAmplifyService<T extends BaseModel>(
     // Hook for managing single item - Reimplemented based on TanStack Query
     useItemHook: (id: string): ItemHook<T> => {
       const hookQueryClient = useQueryClient();
-      const singleItemQueryKey: QueryKey = [modelName, id];
+      const singleItemQueryKey: QueryKey = itemKey(modelName, id);
 
       // First check data from cache
       const rawCachedData = hookQueryClient.getQueryData<T | T[]>(
-        singleItemQueryKey,
+        singleItemQueryKey
       );
 
       // 🔧 버그 수정: 배열이 캐시되어 있는 경우 처리
       let cachedData: T | undefined;
       if (Array.isArray(rawCachedData)) {
         console.warn(
-          `🍬 ${modelName} useItemHook: Cache contains array instead of single item. Finding matching item.`,
+          `🍬 ${modelName} useItemHook: Cache contains array instead of single item. Finding matching item.`
         );
         const matchingItem = rawCachedData.find((item: any) => item?.id === id);
         cachedData = matchingItem || undefined;
@@ -1734,7 +1759,7 @@ export function createAmplifyService<T extends BaseModel>(
         console.warn(
           `🍬 ${modelName} useItemHook: Cache ID mismatch! Requested: ${id}, Cached: ${
             (rawCachedData as any)?.id
-          }. Ignoring cached data.`,
+          }. Ignoring cached data.`
         );
         cachedData = undefined;
       }
@@ -1773,7 +1798,7 @@ export function createAmplifyService<T extends BaseModel>(
       const refreshItem = useCallback(async (): Promise<T | null> => {
         console.log(
           `🍬 ${modelName} useItemHook refresh called`,
-          singleItemQueryKey,
+          singleItemQueryKey
         );
         const { data } = await refetch({ throwOnError: true }); // Throw on error
         return data || null;
@@ -1792,7 +1817,7 @@ export function createAmplifyService<T extends BaseModel>(
             throw error;
           }
         },
-        [updateMutation, id],
+        [updateMutation, id]
       );
 
       const deleteItem = useCallback(async (): Promise<boolean> => {
@@ -1844,7 +1869,7 @@ export function createAmplifyService<T extends BaseModel>(
       // TanStack Query doesn't directly expose Zustand store
       // Need to connect Zustand store implementation here if needed
       console.warn(
-        `🍬 ${modelName}.getStore() is not directly supported in TanStack Query.`,
+        `🍬 ${modelName}.getStore() is not directly supported in TanStack Query.`
       );
       // Temporarily return empty object or throw error
       return {} as any; // Or throw new Error("getStore is not supported in TanStack Query implementation");

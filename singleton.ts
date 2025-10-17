@@ -142,29 +142,25 @@ export function createSingletonService<T>(
 
     // React hook to manage the current singleton item
     useCurrentHook: (): ItemHook<T> => {
-      // Resolve current singleton ID with React Query (object-style API)
-      const { data: currentId } = useQuery<
-        string | null,
-        Error,
-        string | null,
-        [string, string]
-      >({
+      const {
+        data: currentId,
+        isLoading: isIdLoading,
+        error: idError,
+        refetch: refetchId,
+      } = useQuery<string | null, Error, string | null, [string, string]>({
         queryKey: [modelName, "currentId"],
         queryFn: async () => {
           try {
             const id = await getModelId();
             return id || null;
           } catch (error) {
-            // Safely call getStore to surface errors if available
             try {
               baseService
                 .getStore?.()
                 ?.setError?.(
                   error instanceof Error ? error : new Error(String(error))
                 );
-            } catch (_storeError) {
-              // Ignore store errors
-            }
+            } catch (_storeError) {}
             return null;
           }
         },
@@ -172,9 +168,47 @@ export function createSingletonService<T>(
         refetchOnWindowFocus: false,
       });
 
-      // Delegate to base service's single item hook once ID is known
-      const resolvedId: string = currentId ?? "";
-      return baseService.useItemHook(resolvedId);
+      const idForItemHook = currentId ?? "";
+      const core = baseService.useItemHook(idForItemHook);
+
+      const item: T | null = (() => {
+        if (!currentId) return null;
+        const raw: any = core.item;
+        if (Array.isArray(raw)) {
+          const match = raw.find((i: any) => i?.id === currentId);
+          return (match as T) || null;
+        }
+        return (raw as T) ?? null;
+      })();
+
+      const isLoading = isIdLoading || core.isLoading;
+      const error = (idError as Error | null) || core.error || null;
+
+      const refresh = async (): Promise<T | null> => {
+        if (!currentId) {
+          const { data } = await refetchId({ throwOnError: false });
+          if (!data) return null;
+        }
+        return core.refresh();
+      };
+
+      const update = async (data: Partial<T>): Promise<T | null> => {
+        if (!currentId) {
+          const { data } = await refetchId({ throwOnError: false });
+          if (!data) return null;
+        }
+        return core.update(data);
+      };
+
+      const remove = async (): Promise<boolean> => {
+        if (!currentId) {
+          const { data } = await refetchId({ throwOnError: false });
+          if (!data) return false;
+        }
+        return core.delete();
+      };
+
+      return { item, isLoading, error, refresh, update, delete: remove };
     },
   };
 

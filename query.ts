@@ -135,7 +135,9 @@ export function configure(options: ConfigOptions = {}) {
       maxAge: config.storage?.maxAge || 1000 * 60 * 60 * 24 * 7, // Default 7 days
       dehydrateOptions: {
         shouldDehydrateQuery: (query: any) => {
-          // Filter for queries not to cache (implement if needed)
+          // Only persist successful queries to reduce hydration cancellation noise
+          if (query.state?.status !== "success") return false;
+          // Avoid persisting mutation-like or transient keys if needed later
           return true;
         },
       },
@@ -174,7 +176,10 @@ export function invalidateModel(modelName: string) {
  * @param id Item ID
  */
 export function invalidateModelItem(modelName: string, id: string) {
-  queryClient.invalidateQueries({ queryKey: [modelName, id] });
+  // New item key
+  queryClient.invalidateQueries({ queryKey: [modelName, "item", id] });
+  // Backward cleanup (in case legacy keys exist)
+  queryClient.removeQueries({ queryKey: [modelName, id], exact: true });
 }
 
 /**
