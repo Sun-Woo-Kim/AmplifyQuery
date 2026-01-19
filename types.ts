@@ -23,6 +23,7 @@ export type StoreState<T> = {
 export type ModelHook<T> = {
   items: T[]; // Array of type T
   isLoading: boolean;
+  isSynced?: boolean;
   error: Error | null;
   getItem: (id: string) => T | null | undefined;
   refresh: (options?: { filter?: Record<string, any> }) => Promise<T[]>;
@@ -122,6 +123,10 @@ export interface AmplifyDataService<T> {
       queryName: string; // Query name to use
       args: Record<string, any>; // Query arguments
       forceRefresh?: boolean; // Whether to force refresh
+    };
+    realtime?: {
+      enabled?: boolean;
+      observeOptions?: Record<string, any>;
     };
   }) => ModelHook<T>;
 

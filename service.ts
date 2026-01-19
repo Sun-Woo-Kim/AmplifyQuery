@@ -21,7 +21,7 @@ import {
 } from "@tanstack/react-query";
 import { getCurrentUser } from "aws-amplify/auth";
 import { randomUUID } from "expo-crypto";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 // -------------------------------
 // Query key helpers
@@ -1554,6 +1554,10 @@ export function createAmplifyService<T extends BaseModel>(
         args: Record<string, any>;
         forceRefresh?: boolean;
       };
+      realtime?: {
+        enabled?: boolean;
+        observeOptions?: Record<string, any>;
+      };
     }): ModelHook<T> => {
       const hookQueryClient = useQueryClient();
 
@@ -1617,15 +1621,19 @@ export function createAmplifyService<T extends BaseModel>(
         ]
       );
 
+      const realtimeEnabled = options?.realtime?.enabled === true;
+
       const queryOptions: UseQueryOptions<T[], Error, T[], QueryKey> = {
         queryKey,
         queryFn,
-        enabled: options?.initialFetchOptions?.fetch !== false,
+        enabled: options?.initialFetchOptions?.fetch !== false && !realtimeEnabled,
         staleTime: 1000 * 30, // Keep fresh for 30 seconds (refresh more frequently)
         refetchOnMount: true, // Refetch on component mount
         refetchOnWindowFocus: false, // Don't auto-refetch on window focus
         refetchOnReconnect: true, // Refetch on network reconnect
       };
+
+      const [isSynced, setIsSynced] = useState<boolean | undefined>(undefined);
 
       const {
         data: items = [],
@@ -1633,6 +1641,95 @@ export function createAmplifyService<T extends BaseModel>(
         error,
         refetch,
       } = useQuery<T[], Error, T[], QueryKey>(queryOptions);
+
+      useEffect(() => {
+        if (!realtimeEnabled) return;
+        if (options?.customList) {
+          console.warn(
+            `🍬 ${modelName} useHook realtime: customList is not supported.`
+          );
+          return;
+        }
+
+        const client = getClient();
+        const model = (client.models as any)?.[modelName];
+        if (!model?.observeQuery) {
+          console.warn(
+            `🍬 ${modelName} useHook realtime: observeQuery not available.`
+          );
+          return;
+        }
+
+        const observeOptions = {
+          ...(options?.realtime?.observeOptions || {}),
+        } as Record<string, any>;
+
+        if (
+          observeOptions.filter === undefined &&
+          options?.initialFetchOptions?.filter
+        ) {
+          observeOptions.filter = options.initialFetchOptions.filter;
+        }
+
+        let isMounted = true;
+        const subscription = model.observeQuery(observeOptions).subscribe({
+          next: ({ items: nextItems, isSynced: synced }: any) => {
+            if (!isMounted) return;
+            const safeItems = Array.isArray(nextItems)
+              ? nextItems.filter(Boolean)
+              : [];
+
+            const previousItems =
+              hookQueryClient.getQueryData<T[]>(queryKey) || [];
+            const previousIds = new Set(
+              previousItems.map((item: any) => item?.id).filter(Boolean)
+            );
+            const nextIds = new Set(
+              safeItems.map((item: any) => item?.id).filter(Boolean)
+            );
+
+            previousIds.forEach((id) => {
+              if (!nextIds.has(id)) {
+                hookQueryClient.removeQueries({
+                  queryKey: itemKey(modelName, id),
+                  exact: true,
+                });
+              }
+            });
+
+            hookQueryClient.setQueryData(queryKey, safeItems);
+            safeItems.forEach((item: any) => {
+              if (item?.id) {
+                hookQueryClient.setQueryData(
+                  itemKey(modelName, item.id),
+                  item
+                );
+              }
+            });
+
+            setIsSynced(Boolean(synced));
+          },
+          error: (err: any) => {
+            console.error(
+              `🍬 ${modelName} useHook realtime subscribe error:`,
+              err
+            );
+          },
+        });
+
+        return () => {
+          isMounted = false;
+          subscription?.unsubscribe?.();
+        };
+      }, [
+        realtimeEnabled,
+        modelName,
+        queryKey,
+        hookQueryClient,
+        options?.customList,
+        options?.initialFetchOptions?.filter,
+        options?.realtime?.observeOptions,
+      ]);
 
       // Interface functions implementation
       const getItem = useCallback(
@@ -1777,6 +1874,7 @@ export function createAmplifyService<T extends BaseModel>(
         items,
         isLoading,
         error: error as Error | null,
+        isSynced,
         getItem,
         refresh,
         create: createItem,
