@@ -1,3 +1,10 @@
+## [1.0.15](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.14...v1.0.15) (2026-01-19)
+
+
+### fix
+
+* refactor(service.ts): optimize optimistic update logic and improve cache handling ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/eed450589836fc5db787dfc6498ed607e095aa4d))
+
 ## [1.0.14](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.13...v1.0.14) (2025-10-17)
 
 
