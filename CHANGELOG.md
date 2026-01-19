@@ -1,3 +1,10 @@
+## [1.0.19](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.18...v1.0.19) (2026-01-19)
+
+
+### fix
+
+* docs(readme): add realtime subscriptions and hook API documentation ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/ef61cab8719b4156832cc874f798c7b0fad9ea93))
+
 ## [1.0.18](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.17...v1.0.18) (2026-01-19)
 
 
