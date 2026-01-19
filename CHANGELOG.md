@@ -1,3 +1,10 @@
+## [1.0.18](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.17...v1.0.18) (2026-01-19)
+
+
+### fix
+
+* feat(useItemHook): add realtime subscription with observeQuery ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/815e56d0ba2c168cb1625c0e5733fd5458c68c2f))
+
 ## [1.0.17](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.16...v1.0.17) (2026-01-19)
 
 
