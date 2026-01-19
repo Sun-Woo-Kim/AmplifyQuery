@@ -745,7 +745,12 @@ export function createAmplifyService<T extends BaseModel>(
         // Check cache first (if forceRefresh is false)
         if (!options.forceRefresh) {
           const cachedItems = queryClient.getQueryData<T[]>(queryKey);
-          if (cachedItems && cachedItems.length > 0) {
+          const queryState = queryClient.getQueryState(queryKey);
+          if (
+            cachedItems &&
+            cachedItems.length > 0 &&
+            !queryState?.isInvalidated
+          ) {
             console.log(`🍬 ${modelName} list using cache`, queryKey);
             return cachedItems.filter((item) => item !== null);
           }
@@ -1657,6 +1662,23 @@ export function createAmplifyService<T extends BaseModel>(
         async (data: Partial<T>): Promise<T | null> => {
           try {
             const result = await service.create(data);
+            if (result) {
+              // Keep hook cache in sync immediately
+              hookQueryClient.setQueryData<T[]>(
+                queryKey,
+                (oldData: any) => {
+                  const oldItems = Array.isArray(oldData) ? oldData : [];
+                  if (oldItems.some((item: any) => item?.id === (result as any).id)) {
+                    return oldItems;
+                  }
+                  return [...oldItems, result];
+                }
+              );
+              hookQueryClient.setQueryData(
+                itemKey(modelName, (result as any).id),
+                result
+              );
+            }
             // Automatically refresh list after successful create
             await refetch();
             return result;
@@ -1672,6 +1694,22 @@ export function createAmplifyService<T extends BaseModel>(
         async (data: Partial<T> & { id: string }): Promise<T | null> => {
           try {
             const result = await service.update(data);
+            if (result) {
+              // Keep hook cache in sync immediately
+              hookQueryClient.setQueryData<T[]>(
+                queryKey,
+                (oldData: any) => {
+                  const oldItems = Array.isArray(oldData) ? oldData : [];
+                  return oldItems.map((item: any) =>
+                    item && item.id === (result as any).id ? result : item
+                  );
+                }
+              );
+              hookQueryClient.setQueryData(
+                itemKey(modelName, (result as any).id),
+                result
+              );
+            }
             // Automatically refresh list after successful update
             await refetch();
             return result;
@@ -1687,6 +1725,17 @@ export function createAmplifyService<T extends BaseModel>(
         async (id: string): Promise<boolean> => {
           try {
             const result = await service.delete(id);
+            if (result) {
+              // Keep hook cache in sync immediately
+              hookQueryClient.setQueryData<T[]>(
+                queryKey,
+                (oldData: any) => {
+                  const oldItems = Array.isArray(oldData) ? oldData : [];
+                  return oldItems.filter((item: any) => item?.id !== id);
+                }
+              );
+              hookQueryClient.setQueryData(itemKey(modelName, id), null);
+            }
             // Automatically refresh list after successful delete
             await refetch();
             return result;
@@ -1832,12 +1881,24 @@ export function createAmplifyService<T extends BaseModel>(
       const deleteItem = useCallback(async (): Promise<boolean> => {
         try {
           const result = await deleteMutation.mutateAsync();
+          if (result) {
+            // Ensure the hook's query cache reflects deletion immediately
+            hookQueryClient.setQueryData(singleItemQueryKey, null);
+            hookQueryClient.invalidateQueries({
+              queryKey: [modelName],
+              refetchType: "active",
+            });
+            hookQueryClient.invalidateQueries({
+              queryKey: singleItemQueryKey,
+              refetchType: "active",
+            });
+          }
           return result;
         } catch (error) {
           console.error(`🍬 ${modelName} useItemHook delete error:`, error);
           throw error;
         }
-      }, [deleteMutation]);
+      }, [deleteMutation, hookQueryClient, modelName, singleItemQueryKey]);
 
       // Change loading state to false when isLoading is true and cached data exists
       const effectiveLoading = isLoading && !cachedData;
