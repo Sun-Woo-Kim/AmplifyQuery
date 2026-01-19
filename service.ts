@@ -138,34 +138,37 @@ async function performOptimisticUpdate<T extends BaseModel>(
 
   // 2. Update list queries
   relatedQueryKeys.forEach((queryKey) => {
-    // Process only list query keys since single item key is handled above
-    if (queryKey.length > 1 && queryKey[1] !== itemId) {
-      const previousItems = queryClient.getQueryData(queryKey);
-      previousDataMap.set(queryKey, previousItems); // Backup previous data
-
-      queryClient.setQueryData(queryKey, (oldData: any) => {
-        // Safely handle if oldData is null, undefined or not an array
-        const oldItems = Array.isArray(oldData) ? oldData : [];
-
-        const hasItem = oldItems.some(
-          (item: any) => item && (item as any).id === itemId
-        );
-
-        if (hasItem) {
-          // Update if existing item found
-          return oldItems.map((item: any) =>
-            item && (item as any).id === itemId
-              ? { ...item, ...updateData } // Apply optimistic update data
-              : item
-          );
-        } else if (optimisticData && queryKey.length < 3) {
-          // Only consider adding created item for top-level list queries
-          // Add if no existing item and optimistic update data available (for create/upsert)
-          return [...oldItems, optimisticData];
-        }
-        return oldItems; // No changes
-      });
+    // Skip single-item keys (handled above)
+    if (isItemKeyForModel(modelName, queryKey)) {
+      return;
     }
+
+    const previousItems = queryClient.getQueryData(queryKey);
+    previousDataMap.set(queryKey, previousItems); // Backup previous data
+
+    queryClient.setQueryData(queryKey, (oldData: any) => {
+      // Safely handle if oldData is null, undefined or not an array
+      const oldItems = Array.isArray(oldData) ? oldData : [];
+
+      const hasItem = oldItems.some(
+        (item: any) => item && (item as any).id === itemId
+      );
+
+      if (hasItem) {
+        // Update if existing item found
+        return oldItems.map((item: any) =>
+          item && (item as any).id === itemId
+            ? { ...item, ...updateData } // Apply optimistic update data
+            : item
+        );
+      }
+
+      // Only add created item to top-level list queries (e.g. [modelName])
+      if (optimisticData && queryKey.length === 1) {
+        return [...oldItems, optimisticData];
+      }
+      return oldItems; // No changes
+    });
   });
 
   return previousDataMap;
@@ -1052,17 +1055,17 @@ export function createAmplifyService<T extends BaseModel>(
 
         // Backup and perform optimistic update for list queries (remove item)
         relatedQueryKeys.forEach((queryKey) => {
-          if (queryKey.length > 1 && queryKey[1] !== id) {
-            // Exclude single item keys
-            const data = queryClient.getQueryData(queryKey);
-            if (data) {
-              previousDataMap.set(queryKey, data);
-            }
-            queryClient.setQueryData(queryKey, (oldData: any) => {
-              const oldItems = Array.isArray(oldData) ? oldData : [];
-              return oldItems.filter((item: any) => (item as any)?.id !== id);
-            });
+          if (isItemKeyForModel(modelName, queryKey)) {
+            return;
           }
+          const data = queryClient.getQueryData(queryKey);
+          if (data) {
+            previousDataMap.set(queryKey, data);
+          }
+          queryClient.setQueryData(queryKey, (oldData: any) => {
+            const oldItems = Array.isArray(oldData) ? oldData : [];
+            return oldItems.filter((item: any) => (item as any)?.id !== id);
+          });
         });
 
         try {
@@ -1078,8 +1081,14 @@ export function createAmplifyService<T extends BaseModel>(
           console.log(`🍬 ${modelName} delete success:`, id);
 
           // On API success, invalidate all related queries to automatically refresh
+          relatedQueryKeys.forEach((queryKey) =>
+            queryClient.invalidateQueries({
+              queryKey,
+              refetchType: "active",
+            })
+          );
           queryClient.invalidateQueries({
-            queryKey: [modelName],
+            queryKey: itemKey(modelName, id),
             refetchType: "active",
           });
 
@@ -1141,19 +1150,19 @@ export function createAmplifyService<T extends BaseModel>(
 
         // Update all list query caches (remove items included in id list)
         relatedQueryKeys.forEach((queryKey) => {
-          if (queryKey.length > 1 && !ids.includes(queryKey[1] as string)) {
-            // Exclude single item keys and list keys where id is second element (handled individually)
-            const data = queryClient.getQueryData(queryKey);
-            if (data) {
-              previousDataMap.set(queryKey, data);
-            }
-            queryClient.setQueryData(queryKey, (oldData: any) => {
-              const oldItems = Array.isArray(oldData) ? oldData : [];
-              return oldItems.filter(
-                (item: any) => item && !ids.includes((item as any).id)
-              );
-            });
+          if (isItemKeyForModel(modelName, queryKey)) {
+            return;
           }
+          const data = queryClient.getQueryData(queryKey);
+          if (data) {
+            previousDataMap.set(queryKey, data);
+          }
+          queryClient.setQueryData(queryKey, (oldData: any) => {
+            const oldItems = Array.isArray(oldData) ? oldData : [];
+            return oldItems.filter(
+              (item: any) => item && !ids.includes((item as any).id)
+            );
+          });
         });
 
         try {
