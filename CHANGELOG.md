@@ -1,3 +1,10 @@
+## [1.0.16](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.15...v1.0.16) (2026-01-19)
+
+
+### fix
+
+* fix(service.ts): sync hook cache immediately after mutations ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/aa4688a9ffa7839401281a394ca0ade1596208e7))
+
 ## [1.0.15](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.14...v1.0.15) (2026-01-19)
 
 
