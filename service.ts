@@ -401,9 +401,9 @@ export function createAmplifyService<T extends BaseModel>(
             `🍬 ${modelName} creation attempt [Auth: ${authMode}]:`,
             newItem.id
           );
-          const { data: createdItem } = await (getClient().models as any)[
-            modelName
-          ].create(newItem, authModeParams);
+        const { data: createdItem } = await (getClient().models as any)[
+          modelName
+        ].create(newItem, authModeParams);
 
           if (createdItem) {
             // Update cache on API success
@@ -791,9 +791,9 @@ export function createAmplifyService<T extends BaseModel>(
           );
 
           // Execute owner query
-          const { data: result } = await (getClient().models as any)[modelName][
-            ownerQueryName
-          ]({ owner, authMode }, authModeParams);
+        const { data: result } = await (getClient().models as any)[modelName][
+          ownerQueryName
+        ]({ owner, authMode }, authModeParams);
 
           // Extract result data + filter null values
           const items = (result?.items || result?.data || result || []).filter(
@@ -984,9 +984,9 @@ export function createAmplifyService<T extends BaseModel>(
             `🍬 ${modelName} update attempt [Auth: ${authMode}]:`,
             itemId
           );
-          const { data: updatedItem } = await (getClient().models as any)[
-            modelName
-          ].update(cleanedData, authModeParams);
+        const { data: updatedItem } = await (getClient().models as any)[
+          modelName
+        ].update(cleanedData, authModeParams);
 
           if (updatedItem) {
             // Update cache on API success
@@ -1319,9 +1319,9 @@ export function createAmplifyService<T extends BaseModel>(
               `🍬 ${modelName} upsert(update) attempt [Auth: ${authMode}]:`,
               data.id
             );
-            const { data: updatedItem } = await (getClient().models as any)[
-              modelName
-            ].update(cleanedData, authModeParams);
+        const { data: updatedItem } = await (getClient().models as any)[
+          modelName
+        ].update(cleanedData, authModeParams);
             if (updatedItem) {
               handleCacheUpdateOnSuccess(
                 queryClient,
@@ -1348,9 +1348,9 @@ export function createAmplifyService<T extends BaseModel>(
               `🍬 ${modelName} upsert(create) attempt [Auth: ${authMode}]:`,
               data.id
             );
-            const { data: createdItem } = await (getClient().models as any)[
-              modelName
-            ].create(cleanedData, authModeParams);
+        const { data: createdItem } = await (getClient().models as any)[
+          modelName
+        ].create(cleanedData, authModeParams);
             if (createdItem) {
               handleCacheUpdateOnSuccess(
                 queryClient,
@@ -1557,6 +1557,7 @@ export function createAmplifyService<T extends BaseModel>(
       realtime?: {
         enabled?: boolean;
         observeOptions?: Record<string, any>;
+        events?: Array<"create" | "update" | "delete">;
       };
     }): ModelHook<T> => {
       const hookQueryClient = useQueryClient();
@@ -1622,6 +1623,8 @@ export function createAmplifyService<T extends BaseModel>(
       );
 
       const realtimeEnabled = options?.realtime?.enabled === true;
+      const realtimeEvents =
+        options?.realtime?.events ?? ["create", "update", "delete"];
 
       const queryOptions: UseQueryOptions<T[], Error, T[], QueryKey> = {
         queryKey,
@@ -1645,10 +1648,72 @@ export function createAmplifyService<T extends BaseModel>(
       useEffect(() => {
         if (!realtimeEnabled) return;
         if (options?.customList) {
-          console.warn(
-            `🍬 ${modelName} useHook realtime: customList is not supported.`
-          );
-          return;
+          const client = getClient();
+          const model = (client.models as any)?.[modelName];
+          if (!model) {
+            console.warn(
+              `🍬 ${modelName} useHook realtime: model not available.`
+            );
+            return;
+          }
+
+          const observeOptions = {
+            ...(options?.realtime?.observeOptions || {}),
+          } as Record<string, any>;
+          if (
+            observeOptions.filter === undefined &&
+            options?.initialFetchOptions?.filter
+          ) {
+            observeOptions.filter = options.initialFetchOptions.filter;
+          }
+          const subscriptions = [
+            realtimeEvents.includes("create") && model.onCreate
+              ? model.onCreate(observeOptions).subscribe({
+                  next: () =>
+                    hookQueryClient.invalidateQueries({
+                      queryKey,
+                      refetchType: "active",
+                    }),
+                  error: (err: any) =>
+                    console.error(
+                      `🍬 ${modelName} useHook realtime onCreate error:`,
+                      err
+                    ),
+                })
+              : null,
+            realtimeEvents.includes("update") && model.onUpdate
+              ? model.onUpdate(observeOptions).subscribe({
+                  next: () =>
+                    hookQueryClient.invalidateQueries({
+                      queryKey,
+                      refetchType: "active",
+                    }),
+                  error: (err: any) =>
+                    console.error(
+                      `🍬 ${modelName} useHook realtime onUpdate error:`,
+                      err
+                    ),
+                })
+              : null,
+            realtimeEvents.includes("delete") && model.onDelete
+              ? model.onDelete(observeOptions).subscribe({
+                  next: () =>
+                    hookQueryClient.invalidateQueries({
+                      queryKey,
+                      refetchType: "active",
+                    }),
+                  error: (err: any) =>
+                    console.error(
+                      `🍬 ${modelName} useHook realtime onDelete error:`,
+                      err
+                    ),
+                })
+              : null,
+          ].filter(Boolean);
+
+          return () => {
+            subscriptions.forEach((sub: any) => sub?.unsubscribe?.());
+          };
         }
 
         const client = getClient();
@@ -1885,9 +1950,18 @@ export function createAmplifyService<T extends BaseModel>(
     },
 
     // Hook for managing single item - Reimplemented based on TanStack Query
-    useItemHook: (id: string): ItemHook<T> => {
+    useItemHook: (
+      id: string,
+      options?: {
+        realtime?: {
+          enabled?: boolean;
+          observeOptions?: Record<string, any>;
+        };
+      }
+    ): ItemHook<T> => {
       const hookQueryClient = useQueryClient();
       const singleItemQueryKey: QueryKey = itemKey(modelName, id);
+      const realtimeEnabled = options?.realtime?.enabled === true;
 
       // First check data from cache
       const rawCachedData = hookQueryClient.getQueryData<T | T[]>(
@@ -1933,8 +2007,100 @@ export function createAmplifyService<T extends BaseModel>(
         staleTime: 1000 * 60, // Keep data "fresh" for 1 minute
         refetchOnMount: cachedData ? false : true, // Only refetch if no cached data
         refetchOnWindowFocus: false, // Disable window focus refetch to prevent loops
-        enabled: !!id, // Only enable query when id exists
+        enabled: !!id && !realtimeEnabled, // Only enable query when id exists
       });
+
+      const [isSynced, setIsSynced] = useState<boolean | undefined>(undefined);
+
+      useEffect(() => {
+        if (!realtimeEnabled || !id) return;
+
+        const client = getClient();
+        const model = (client.models as any)?.[modelName];
+        if (!model?.observeQuery) {
+          console.warn(
+            `🍬 ${modelName} useItemHook realtime: observeQuery not available.`
+          );
+          return;
+        }
+
+        const observeOptions = {
+          ...(options?.realtime?.observeOptions || {}),
+        } as Record<string, any>;
+
+        if (!observeOptions.filter) {
+          observeOptions.filter = { id: { eq: id } };
+        }
+
+        let isMounted = true;
+        const subscription = model.observeQuery(observeOptions).subscribe({
+          next: ({ items: nextItems, isSynced: synced }: any) => {
+            if (!isMounted) return;
+            const safeItems = Array.isArray(nextItems)
+              ? nextItems.filter(Boolean)
+              : [];
+            const nextItem = safeItems.find((entry: any) => entry?.id === id) || null;
+
+            const relatedQueryKeys = findRelatedQueryKeys(
+              modelName,
+              hookQueryClient
+            );
+
+            if (nextItem) {
+              hookQueryClient.setQueryData(singleItemQueryKey, nextItem);
+              relatedQueryKeys.forEach((queryKey) => {
+                if (isItemKeyForModel(modelName, queryKey)) {
+                  return;
+                }
+                hookQueryClient.setQueryData(queryKey, (oldData: any) => {
+                  const oldItems = Array.isArray(oldData) ? oldData : [];
+                  const hasItem = oldItems.some((entry: any) => entry?.id === id);
+                  if (hasItem) {
+                    return oldItems.map((entry: any) =>
+                      entry?.id === id ? nextItem : entry
+                    );
+                  }
+                  if (queryKey.length === 1) {
+                    return [...oldItems, nextItem];
+                  }
+                  return oldItems;
+                });
+              });
+            } else {
+              hookQueryClient.setQueryData(singleItemQueryKey, null);
+              relatedQueryKeys.forEach((queryKey) => {
+                if (isItemKeyForModel(modelName, queryKey)) {
+                  return;
+                }
+                hookQueryClient.setQueryData(queryKey, (oldData: any) => {
+                  const oldItems = Array.isArray(oldData) ? oldData : [];
+                  return oldItems.filter((entry: any) => entry?.id !== id);
+                });
+              });
+            }
+
+            setIsSynced(Boolean(synced));
+          },
+          error: (err: any) => {
+            console.error(
+              `🍬 ${modelName} useItemHook realtime subscribe error:`,
+              err
+            );
+          },
+        });
+
+        return () => {
+          isMounted = false;
+          subscription?.unsubscribe?.();
+        };
+      }, [
+        realtimeEnabled,
+        id,
+        modelName,
+        hookQueryClient,
+        singleItemQueryKey,
+        options?.realtime?.observeOptions,
+      ]);
 
       // useMutation hooks call service methods,
       // Service methods handle optimistic updates and cache updates/rollbacks internally.
@@ -2017,6 +2183,7 @@ export function createAmplifyService<T extends BaseModel>(
         item: item || null,
         isLoading: effectiveLoading, // Not loading if cached data exists
         error: error as Error | null, // Explicitly specify error type
+        isSynced,
         refresh: refreshItem,
         update: updateItem,
         delete: deleteItem,

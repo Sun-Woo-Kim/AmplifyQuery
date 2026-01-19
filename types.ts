@@ -43,6 +43,7 @@ export type ModelHook<T> = {
 export type ItemHook<T> = {
   item: T | null; // Type T or null
   isLoading: boolean;
+  isSynced?: boolean;
   error: Error | null;
   refresh: () => Promise<T | null>;
   update: (data: Partial<T>) => Promise<T | null>;
@@ -127,11 +128,20 @@ export interface AmplifyDataService<T> {
     realtime?: {
       enabled?: boolean;
       observeOptions?: Record<string, any>;
+      events?: Array<"create" | "update" | "delete">;
     };
   }) => ModelHook<T>;
 
   // Single item management hook
-  useItemHook: (id: string) => ItemHook<T>;
+  useItemHook: (
+    id: string,
+    options?: {
+      realtime?: {
+        enabled?: boolean;
+        observeOptions?: Record<string, any>;
+      };
+    }
+  ) => ItemHook<T>;
 
   // Model name (required for singleton service)
   modelName: string;

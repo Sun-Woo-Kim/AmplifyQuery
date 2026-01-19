@@ -33,6 +33,11 @@ export function getModelOwnerQueryMap(): Record<string, string> | undefined {
 }
 
 /**
+ * Set the global selection set mapping
+ * @param selectionSetMap Mapping of model names to selection sets
+ */
+
+/**
  * Get owner query name for a specific model
  * @param modelName The model name
  * @returns The owner query name or default format if not found
