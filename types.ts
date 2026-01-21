@@ -164,7 +164,14 @@ export interface SingletonAmplifyService<T> extends AmplifyDataService<T> {
   updateCurrent: (data: Partial<T>) => Promise<T | null>;
   upsertCurrent: (data: Partial<T>) => Promise<T | null>;
   // Hook for managing current singleton item
-  useCurrentHook: () => ItemHook<T>;
+  useCurrentHook: (
+    options?: {
+      realtime?: {
+        enabled?: boolean;
+        observeOptions?: Record<string, any>;
+      };
+    }
+  ) => ItemHook<T>;
 }
 
 export interface BaseModel {
@@ -194,6 +201,12 @@ export interface AmplifyQueryConfig {
 
   // Model owner query mapping for global configuration
   modelOwnerQueryMap?: Record<string, string>;
+
+  // Singleton auto-create (when useCurrentHook finds no item)
+  singletonAutoCreate?: {
+    enabled?: boolean;
+    models?: string[]; // if omitted, applies to all singleton services
+  };
 
   // Add React Query caching related options
   isCachingEnabled?: boolean;

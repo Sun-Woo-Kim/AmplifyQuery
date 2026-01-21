@@ -2,6 +2,8 @@ import { AmplifyDataService, SingletonAmplifyService, ItemHook } from "./types";
 import { getClient } from "./client";
 import { getCurrentUser } from "aws-amplify/auth";
 import { useQuery } from "@tanstack/react-query";
+import { isSingletonAutoCreateEnabledForModel } from "./config";
+import { useEffect, useRef } from "react";
 
 /**
  * Function to create an extension service for singleton models
@@ -141,7 +143,14 @@ export function createSingletonService<T>(
     },
 
     // React hook to manage the current singleton item
-    useCurrentHook: (): ItemHook<T> => {
+    useCurrentHook: (
+      options?: {
+        realtime?: {
+          enabled?: boolean;
+          observeOptions?: Record<string, any>;
+        };
+      }
+    ): ItemHook<T> => {
       const {
         data: currentId,
         isLoading: isIdLoading,
@@ -169,7 +178,8 @@ export function createSingletonService<T>(
       });
 
       const idForItemHook = currentId ?? "";
-      const core = baseService.useItemHook(idForItemHook);
+      const core = baseService.useItemHook(idForItemHook, options);
+      const didAutoCreateRef = useRef(false);
 
       const item: T | null = (() => {
         if (!currentId) return null;
@@ -183,6 +193,25 @@ export function createSingletonService<T>(
 
       const isLoading = isIdLoading || core.isLoading;
       const error = (idError as Error | null) || core.error || null;
+
+      useEffect(() => {
+        if (!currentId) return;
+        if (isLoading) return;
+        if (!isSingletonAutoCreateEnabledForModel(modelName)) return;
+        if (didAutoCreateRef.current) return;
+        if (item) return;
+
+        didAutoCreateRef.current = true;
+        // Best-effort: create { id } if missing.
+        void (async () => {
+          try {
+            await singletonService.upsertCurrent({} as any);
+            await core.refresh();
+          } catch (e) {
+            console.warn(`🍬 ${modelName} useCurrentHook auto-create failed:`, e);
+          }
+        })();
+      }, [currentId, isLoading, item, modelName]);
 
       const refresh = async (): Promise<T | null> => {
         if (!currentId) {

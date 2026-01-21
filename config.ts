@@ -13,6 +13,10 @@ let globalConfig: {
     | "userPool"
     | "lambda"
     | "none";
+  singletonAutoCreate?: {
+    enabled?: boolean;
+    models?: string[];
+  };
 } = {};
 
 /**
@@ -86,4 +90,32 @@ export function getDefaultAuthMode():
 export function resetConfig(): void {
   globalConfig = {};
   console.log("🔧 AmplifyQuery: Global configuration reset");
+}
+
+/**
+ * Enable/disable singleton auto-create behavior for useCurrentHook().
+ */
+export function setSingletonAutoCreate(config: {
+  enabled?: boolean;
+  models?: string[];
+}): void {
+  globalConfig.singletonAutoCreate = {
+    enabled: config.enabled === true,
+    models: Array.isArray(config.models) ? config.models : undefined,
+  };
+  console.log("🔧 AmplifyQuery: Singleton auto-create configured", globalConfig.singletonAutoCreate);
+}
+
+export function getSingletonAutoCreate(): {
+  enabled?: boolean;
+  models?: string[];
+} | undefined {
+  return globalConfig.singletonAutoCreate;
+}
+
+export function isSingletonAutoCreateEnabledForModel(modelName: string): boolean {
+  const cfg = getSingletonAutoCreate();
+  if (!cfg?.enabled) return false;
+  if (!cfg.models || cfg.models.length === 0) return true;
+  return cfg.models.includes(modelName);
 }

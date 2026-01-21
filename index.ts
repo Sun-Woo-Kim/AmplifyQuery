@@ -27,6 +27,7 @@ import {
   getModelOwnerQueryMap,
   getDefaultAuthMode,
   resetConfig,
+  setSingletonAutoCreate,
 } from "./config";
 
 /**
@@ -66,6 +67,11 @@ export function configure(config: AmplifyQueryConfig): void {
   // Set default auth mode
   if (config.defaultAuthMode) {
     setDefaultAuthMode(config.defaultAuthMode);
+  }
+
+  // Set singleton auto-create
+  if (config.singletonAutoCreate) {
+    setSingletonAutoCreate(config.singletonAutoCreate);
   }
 
   // Apply React Query settings

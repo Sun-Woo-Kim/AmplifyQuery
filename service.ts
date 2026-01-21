@@ -1912,10 +1912,38 @@ export function createAmplifyService<T extends BaseModel>(
       const refresh = useCallback(
         async (refreshOptions?: { filter?: Record<string, any> }) => {
           console.log(`🍬 ${modelName} useHook refresh called`, queryKey);
-          const { data } = await refetch({ throwOnError: true }); // Throw on error
-          return data || [];
+          // IMPORTANT:
+          // TanStack Query's refetch() re-runs queryFn, but our service.list/customList can short-circuit
+          // and return cached data unless forceRefresh is true.
+          // refresh() must guarantee a network fetch to reflect server-side updates.
+          try {
+            if (options?.customList) {
+              return await service.customList(
+                options.customList.queryName,
+                options.customList.args,
+                { forceRefresh: true }
+              );
+            }
+
+            const mergedFilter =
+              refreshOptions?.filter ?? options?.initialFetchOptions?.filter;
+
+            if (mergedFilter) {
+              return await service.list({
+                filter: mergedFilter,
+                forceRefresh: true,
+              });
+            }
+
+            return await service.list({ forceRefresh: true });
+          } catch (e) {
+            // Keep previous behavior of surfacing errors via refetch when desired
+            // while still logging consistently.
+            console.error(`🍬 ${modelName} useHook refresh error:`, e);
+            throw e;
+          }
         },
-        [refetch, queryKey]
+        [modelName, options?.customList, options?.initialFetchOptions?.filter, queryKey, service]
       );
 
       const customListFn = useCallback(
@@ -2122,9 +2150,13 @@ export function createAmplifyService<T extends BaseModel>(
           `🍬 ${modelName} useItemHook refresh called`,
           singleItemQueryKey
         );
-        const { data } = await refetch({ throwOnError: true }); // Throw on error
-        return data || null;
-      }, [refetch, singleItemQueryKey]); // Added queryKey dependency
+        // IMPORTANT:
+        // refetch() re-runs queryFn which calls service.get(id) (default forceRefresh=false).
+        // If cache exists, service.get will return cached data and never hit the network.
+        // refresh() must guarantee a network fetch to reflect server-side updates.
+        const latest = await service.get(id, { forceRefresh: true });
+        return latest || null;
+      }, [id, modelName, service, singleItemQueryKey]); // Added id/modelName for correctness
 
       const updateItem = useCallback(
         async (data: Partial<T>): Promise<T | null> => {
