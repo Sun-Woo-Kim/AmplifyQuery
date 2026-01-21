@@ -1,3 +1,10 @@
+## [1.0.20](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.19...v1.0.20) (2026-01-21)
+
+
+### fix
+
+* feat(singleton): add auto-create and realtime support for useCurrentHook ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/70db0111e60afe3bbfabeb792708486c3cf72d3c))
+
 ## [1.0.19](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.18...v1.0.19) (2026-01-19)
 
 
