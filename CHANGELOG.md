@@ -1,3 +1,10 @@
+## [2.0.5](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.4...v2.0.5) (2026-01-22)
+
+
+### fix
+
+* useSingletonHook ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/aad4e553242f735cc0797a7ba0858a6c5231c05c))
+
 ## [2.0.4](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.3...v2.0.4) (2026-01-22)
 
 
