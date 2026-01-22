@@ -29,6 +29,7 @@
     "dev": "expo-module build --watch",
     "lint": "expo-module lint",
     "typecheck": "expo-module typecheck",
+    "codegen:service": "node ./codegen/generateAmplifyService.js",
     "prepare": "expo-module prepare",
     "prepublishOnly": "expo-module prepublishOnly",
     "test": "expo-module test"

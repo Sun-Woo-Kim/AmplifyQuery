@@ -86,19 +86,30 @@ async function getOwnerByAuthMode(authMode: AuthMode): Promise<{
   if (authMode === "userPool") {
     try {
       const { username, userId } = await getCurrentUser();
-      // Canonical "owner" in Amplify is typically the Cognito user sub / userId.
-      // Some legacy codepaths used `${userId}::${username}`. We keep it as a fallback
-      // candidate so list-by-owner can still find older records.
-      const canonicalOwner = userId;
-      // Avoid useless legacy candidates like `${userId}::${userId}` (can happen depending on username config).
+      // IMPORTANT:
+      // Amplify "owner" authorization commonly uses `cognito:username` by default,
+      // but some projects store `sub` (userId) instead. To avoid "refetch clears list"
+      // issues when using list-by-owner secondary indexes, we try multiple candidates.
+      //
+      // Candidates priority (unique, non-empty):
+      // - userId (sub)
+      // - username (cognito:username)
+      // - legacy `${userId}::${username}` (older patterns)
+      const canonicalSub = typeof userId === "string" ? userId : "";
+      const canonicalUsername = typeof username === "string" ? username : "";
       const legacyOwner =
-        username && userId && username !== userId ? `${userId}::${username}` : "";
+        canonicalSub && canonicalUsername && canonicalUsername !== canonicalSub
+          ? `${canonicalSub}::${canonicalUsername}`
+          : "";
 
-      owner = canonicalOwner;
-      ownerCandidates = [canonicalOwner].filter(Boolean);
-      if (legacyOwner && legacyOwner !== canonicalOwner) {
-        ownerCandidates.push(legacyOwner);
-      }
+      // Keep `owner` for compatibility (used in some create/update paths), prefer sub.
+      owner = canonicalSub || canonicalUsername;
+
+      const candidates = [canonicalSub, canonicalUsername, legacyOwner].filter(
+        (v): v is string => typeof v === "string" && v.length > 0
+      );
+      // De-dupe while preserving order
+      ownerCandidates = Array.from(new Set(candidates));
     } catch (error) {
       console.error("Error getting user authentication info:", error);
       // Continue even if error occurs (API call will fail)
@@ -893,7 +904,7 @@ export function createAmplifyService<T extends BaseModel>(
           const client = getClient();
           const model = (client.models as any)?.[modelName];
 
-          // Execute owner query (try canonical owner first, then legacy owner formats)
+        // Execute owner query (try multiple owner candidates)
           const ownersToTry =
             Array.isArray(ownerCandidates) && ownerCandidates.length > 0
               ? ownerCandidates
@@ -929,6 +940,27 @@ export function createAmplifyService<T extends BaseModel>(
               break;
             }
             // If empty, try next candidate (legacy owner format)
+          }
+
+          // If owner-query returns empty for all candidates, fall back to default list().
+          // This prevents "data disappears on refetch" when the project stores owner using
+          // a different identity claim than expected (e.g., username vs sub) OR when the
+          // owner secondary index exists but doesn't match stored owner values.
+          if (!result) {
+            debugWarn(
+              `🍬 ${modelName} list: owner-query returned 0 items for all candidates, falling back to model.list()`,
+              { ownersToTry, authMode }
+            );
+            const { data: fallback } = await model.list({}, authModeParams);
+            const fallbackItems = (
+              fallback?.items ||
+              fallback?.data ||
+              fallback ||
+              []
+            ).filter((item: any) => item !== null);
+            // Use the same shape below by setting `result` to array-ish
+            result = fallbackItems;
+            usedOwner = null;
           }
 
           if (usedOwner && usedOwner !== ownersToTry[0]) {
@@ -1544,17 +1576,16 @@ export function createAmplifyService<T extends BaseModel>(
         const authMode = options?.authMode || currentAuthMode;
 
         // Get owner and parameters based on auth mode
-        const { owner, authModeParams } = await getOwnerByAuthMode(authMode);
+        const { owner, ownerCandidates, authModeParams } =
+          await getOwnerByAuthMode(authMode);
 
-        // Add owner value to queries requiring owner field when userPool auth
+        // Add owner value to queries requiring owner field when userPool auth.
+        // IMPORTANT: many projects store owner as `cognito:username`, not `sub`.
+        // If this is an owner-based index query, try multiple owner candidates to
+        // avoid returning empty results and accidentally clearing UI state on refetch.
+        const isOwnerQuery =
+          authMode === "userPool" && queryName.toLowerCase().includes("owner");
         const enhancedArgs = { ...args };
-        if (
-          owner &&
-          authMode === "userPool" &&
-          queryName.toLowerCase().includes("owner")
-        ) {
-          enhancedArgs.owner = owner;
-        }
 
         // Detect relational query (if fields like dailyId, userId exist)
         const relationField = Object.keys(enhancedArgs).find((key) =>
@@ -1602,10 +1633,48 @@ export function createAmplifyService<T extends BaseModel>(
           throw new Error(`🍬 Query ${queryName} does not exist.`);
         }
 
-        // Execute index query - apply auth mode
-        const { data: result } = await (getClient().models as any)[modelName][
-          queryName
-        ](enhancedArgs, authModeParams);
+        const model = (getClient().models as any)[modelName];
+
+        // Execute index query - apply auth mode (with owner-candidate fallback)
+        let result: any = null;
+        if (isOwnerQuery) {
+          const candidates = [
+            // If caller explicitly passed owner, try that first
+            typeof args?.owner === "string" ? args.owner : "",
+            ...(Array.isArray(ownerCandidates) ? ownerCandidates : []),
+            typeof owner === "string" ? owner : "",
+          ].filter((v): v is string => typeof v === "string" && v.length > 0);
+          const ownersToTry = Array.from(new Set(candidates));
+
+          if (ownersToTry.length === 0) {
+            throw new Error(`🍬 owner is missing for ${modelName}.${queryName}`);
+          }
+
+          for (const candidateOwner of ownersToTry) {
+            const nextArgs = { ...enhancedArgs, owner: candidateOwner };
+            const { data } = await model[queryName](nextArgs, authModeParams);
+            const items = (data?.items || data?.data || data || []).filter(
+              (item: any) => item !== null
+            );
+            if (items.length > 0) {
+              result = data;
+              if (candidateOwner !== ownersToTry[0]) {
+                debugWarn(
+                  `🍬 ${modelName} ${queryName}: returned results only for non-primary owner candidate`,
+                  { tried: ownersToTry, usedOwner: candidateOwner }
+                );
+              }
+              break;
+            }
+          }
+
+          // If still empty, return empty list (do not throw unless requested)
+          if (!result) {
+            result = [];
+          }
+        } else {
+          ({ data: result } = await model[queryName](enhancedArgs, authModeParams));
+        }
 
         // Extract result data
         const items = result?.items || result?.data || result || [];
