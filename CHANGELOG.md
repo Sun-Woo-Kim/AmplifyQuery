@@ -1,3 +1,10 @@
+## [2.0.2](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.1...v2.0.2) (2026-01-22)
+
+
+### fix
+
+* feat: implement AmplifyService code generator and enhance owner handling ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/28237f98f2c35bab40006a3c58cece243928fd89))
+
 ## [2.0.1](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.0...v2.0.1) (2026-01-22)
 
 
