@@ -1,3 +1,10 @@
+## [2.0.6](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.5...v2.0.6) (2026-01-22)
+
+
+### fix
+
+* realtime 수정 ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/a93155b488cc2be117285c6937405211f1c488c3))
+
 ## [2.0.5](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.4...v2.0.5) (2026-01-22)
 
 
