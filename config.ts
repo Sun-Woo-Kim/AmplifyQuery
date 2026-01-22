@@ -17,7 +17,33 @@ let globalConfig: {
     enabled?: boolean;
     models?: string[];
   };
+  debug?: boolean;
 } = {};
+
+function isDebugEnabledInternal(): boolean {
+  // Debug logging must be explicitly enabled via AmplifyQuery.configure({ debug: true }).
+  return globalConfig.debug === true;
+}
+
+export function setDebug(debug: boolean): void {
+  globalConfig.debug = debug === true;
+}
+
+export function isDebugEnabled(): boolean {
+  return isDebugEnabledInternal();
+}
+
+export function debugLog(...args: any[]): void {
+  if (!isDebugEnabledInternal()) return;
+  // eslint-disable-next-line no-console
+  console.log(...args);
+}
+
+export function debugWarn(...args: any[]): void {
+  if (!isDebugEnabledInternal()) return;
+  // eslint-disable-next-line no-console
+  console.warn(...args);
+}
 
 /**
  * Set the global model owner query mapping
@@ -25,7 +51,7 @@ let globalConfig: {
  */
 export function setModelOwnerQueryMap(queryMap: Record<string, string>): void {
   globalConfig.modelOwnerQueryMap = { ...queryMap };
-  console.log("🔧 AmplifyQuery: Global model owner query map configured");
+  debugLog("🔧 AmplifyQuery: Global model owner query map configured");
 }
 
 /**
@@ -66,7 +92,7 @@ export function setDefaultAuthMode(
     | "none"
 ): void {
   globalConfig.defaultAuthMode = authMode;
-  console.log(`🔧 AmplifyQuery: Default auth mode set to ${authMode}`);
+  debugLog(`🔧 AmplifyQuery: Default auth mode set to ${authMode}`);
 }
 
 /**
@@ -89,21 +115,28 @@ export function getDefaultAuthMode():
  */
 export function resetConfig(): void {
   globalConfig = {};
-  console.log("🔧 AmplifyQuery: Global configuration reset");
+  debugLog("🔧 AmplifyQuery: Global configuration reset");
 }
 
 /**
- * Enable/disable singleton auto-create behavior for useCurrentHook().
+ * Enable/disable singleton auto-create behavior for singleton hooks.
+ *
+ * - **New**: `useSigletoneHook()` (recommended)
+ * - **Legacy**: `useCurrentHook()` (deprecated alias)
  */
 export function setSingletonAutoCreate(config: {
   enabled?: boolean;
   models?: string[];
 }): void {
   globalConfig.singletonAutoCreate = {
-    enabled: config.enabled === true,
+    // Default: enabled (singleton services are meant to be convenient)
+    enabled: config.enabled !== false,
     models: Array.isArray(config.models) ? config.models : undefined,
   };
-  console.log("🔧 AmplifyQuery: Singleton auto-create configured", globalConfig.singletonAutoCreate);
+  debugLog(
+    "🔧 AmplifyQuery: Singleton auto-create configured",
+    globalConfig.singletonAutoCreate
+  );
 }
 
 export function getSingletonAutoCreate(): {

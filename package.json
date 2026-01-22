@@ -1,6 +1,6 @@
 {
   "name": "amplifyquery",
-  "version": "1.0.20",
+  "version": "2.0.0",
   "description": "Amplify+Query",
   "keywords": [
     "Amplify",
@@ -24,7 +24,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "expo-module build",
+    "build": "CI=1 expo-module build",
     "clean": "expo-module clean",
     "dev": "expo-module build --watch",
     "lint": "expo-module lint",
@@ -34,34 +34,31 @@
     "test": "expo-module test"
   },
   "devDependencies": {
-    "@aws-amplify/api": "^6.3.11",
-    "@aws-amplify/core": "^6.11.4",
-    "@aws-amplify/datastore": "^5.0.82",
     "@babel/core": "^7.27.1",
     "@react-native-async-storage/async-storage": "^2.1.2",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/git": "^10.0.1",
-    "@tanstack/react-query": "^5.76.1",
-    "@tanstack/react-query-persist-client": "^5.76.1",
     "@types/react": "^19.1.4",
     "amplify": "^0.0.11",
-    "aws-amplify": "^6.14.4",
     "expo": "^53.0.9",
-    "expo-crypto": "^14.1.4",
-    "expo-file-system": "^18.1.10",
     "expo-module-scripts": "^4.1.7",
-    "react": "^19.1.0",
-    "react-native": "^0.79.2",
-    "react-native-mmkv": "^3.2.0",
     "semantic-release": "^24.2.5",
-    "typescript": "^5.8.3",
-    "zustand": "^5.0.4"
+    "react-native-mmkv": "3.3.1",
+    "zustand": "*",
+    "@tanstack/react-query": "*",
+    "@tanstack/react-query-persist-client": "*",
+    "aws-amplify": "*",
+    "typescript": "^5.8.3"
   },
   "peerDependencies": {
     "expo": ">=49",
     "react": ">=19.1.0",
     "react-native": ">=0.79.2",
-    "react-native-mmkv": "^3.2.0",
-    "zustand": "^5.0.4"
+    "react-native-mmkv": ">=3.3.1",
+    "zustand": ">=5.0.8",
+    "@tanstack/react-query": ">=5.90.10",
+    "@tanstack/react-query-persist-client": ">=5.90.12",
+    "aws-amplify": ">=6.15.8",
+    "expo-crypto": ">=14"
   }
 }

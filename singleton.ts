@@ -2,8 +2,9 @@ import { AmplifyDataService, SingletonAmplifyService, ItemHook } from "./types";
 import { getClient } from "./client";
 import { getCurrentUser } from "aws-amplify/auth";
 import { useQuery } from "@tanstack/react-query";
-import { isSingletonAutoCreateEnabledForModel } from "./config";
+import { getSingletonAutoCreate, isSingletonAutoCreateEnabledForModel } from "./config";
 import { useEffect, useRef } from "react";
+import { debugLog, debugWarn } from "./config";
 
 /**
  * Function to create an extension service for singleton models
@@ -27,19 +28,15 @@ export function createSingletonService<T>(
     getCurrent: async (options?: { forceRefresh?: boolean }) => {
       try {
         const modelId = await getModelId();
+        debugLog(`🍬 ${modelName} singleton.getCurrent`, {
+          modelId,
+          forceRefresh: options?.forceRefresh === true,
+        });
         return baseService.get(modelId, options);
       } catch (error) {
+        // Keep singleton reads soft-failing (null) like base get().
+        // (Do not call getStore here: TanStack Query service doesn't support it.)
         // console.error(`${modelName} singleton instance lookup error:`, error);
-        // Safely call getStore
-        try {
-          baseService
-            .getStore?.()
-            ?.setError?.(
-              error instanceof Error ? error : new Error(String(error))
-            );
-        } catch (storeError) {
-          // Ignore if getStore doesn't exist or call fails
-        }
         return null;
       }
     },
@@ -52,16 +49,6 @@ export function createSingletonService<T>(
         });
       } catch (error) {
         console.error(`${modelName} singleton instance update error:`, error);
-        // Safely call getStore
-        try {
-          baseService
-            .getStore?.()
-            ?.setError?.(
-              error instanceof Error ? error : new Error(String(error))
-            );
-        } catch (storeError) {
-          // Ignore if getStore doesn't exist or call fails
-        }
         return null;
       }
     },
@@ -71,61 +58,44 @@ export function createSingletonService<T>(
         const modelId = await getModelId();
 
         // Check the latest status by forced refresh
+        debugLog(`🍬 ${modelName} singleton.upsertCurrent check existing`, {
+          modelId,
+        });
         const existingItem = await baseService.get(modelId, {
           forceRefresh: true,
         });
 
         if (existingItem) {
           // Update
+          debugLog(`🍬 ${modelName} singleton.upsertCurrent -> update`, {
+            modelId,
+          });
           return baseService.update({ ...data, id: modelId } as Partial<T> & {
             id: string;
           });
         } else {
-          // Create (Direct call to Amplify Client - prevents random ID generation of generic create)
+          // Create using baseService so authMode/owner handling stays consistent.
+          // (We still pass a fixed id to guarantee singleton identity.)
+          debugWarn(`🍬 ${modelName} singleton.upsertCurrent missing -> create`, {
+            modelId,
+          });
           const modelData = { ...data, id: modelId } as any;
 
-          // Safely call getStore
           try {
-            baseService.getStore?.()?.setLoading?.(true);
-          } catch (storeError) {
-            // Ignore if getStore doesn't exist or call fails
-          }
+            // Use service.create to keep cache + auth mode consistent
+            const createdItem = await baseService.create(modelData, {
+              authMode: baseService.getAuthMode(),
+            } as any);
 
-          try {
-            // Call appropriate model from Amplify Models
-            const { data: createdItem } = await (getClient().models as any)[
-              modelName
-            ].create(modelData);
-
-            if (createdItem) {
-              try {
-                baseService.getStore?.()?.setItem?.(createdItem);
-              } catch (storeError) {
-                // Ignore if getStore doesn't exist or call fails
-              }
-            }
-
+            // Ensure cache is synced to latest server state
             try {
-              baseService.getStore?.()?.setLoading?.(false);
-            } catch (storeError) {
-              // Ignore if getStore doesn't exist or call fails
+              await baseService.get(modelId, { forceRefresh: true });
+            } catch {
+              // ignore cache sync failures
             }
 
             return createdItem ?? null;
           } catch (apiError) {
-            try {
-              baseService.getStore?.()?.setLoading?.(false);
-              baseService
-                .getStore?.()
-                ?.setError?.(
-                  apiError instanceof Error
-                    ? apiError
-                    : new Error(String(apiError))
-                );
-            } catch (storeError) {
-              // Ignore if getStore doesn't exist or call fails
-            }
-
             console.error(
               `${modelName} singleton instance Upsert error:`,
               apiError
@@ -143,8 +113,9 @@ export function createSingletonService<T>(
     },
 
     // React hook to manage the current singleton item
-    useCurrentHook: (
+    useSigletoneHook: (
       options?: {
+        autoCreate?: boolean;
         realtime?: {
           enabled?: boolean;
           observeOptions?: Record<string, any>;
@@ -163,13 +134,6 @@ export function createSingletonService<T>(
             const id = await getModelId();
             return id || null;
           } catch (error) {
-            try {
-              baseService
-                .getStore?.()
-                ?.setError?.(
-                  error instanceof Error ? error : new Error(String(error))
-                );
-            } catch (_storeError) {}
             return null;
           }
         },
@@ -178,67 +142,95 @@ export function createSingletonService<T>(
       });
 
       const idForItemHook = currentId ?? "";
-      const core = baseService.useItemHook(idForItemHook, options);
-      const didAutoCreateRef = useRef(false);
+      debugLog(`🍬 ${modelName} useSigletoneHook currentId`, {
+        currentId,
+        idForItemHook,
+      });
+      const core = baseService.useItemHook(
+        idForItemHook,
+        options?.realtime ? { realtime: options.realtime } : undefined
+      );
+      const attemptedAutoCreateForIdRef = useRef<string | null>(null);
 
-      const item: T | null = (() => {
-        if (!currentId) return null;
-        const raw: any = core.item;
-        if (Array.isArray(raw)) {
-          const match = raw.find((i: any) => i?.id === currentId);
-          return (match as T) || null;
-        }
-        return (raw as T) ?? null;
-      })();
+      const cfg = getSingletonAutoCreate();
+      const autoCreateEnabled =
+        typeof options?.autoCreate === "boolean"
+          ? options.autoCreate
+          : cfg
+            ? isSingletonAutoCreateEnabledForModel(modelName)
+            : true;
+
+      const item: T | null = currentId ? core.item : null;
 
       const isLoading = isIdLoading || core.isLoading;
       const error = (idError as Error | null) || core.error || null;
 
       useEffect(() => {
+        debugLog(`🍬 ${modelName} useSigletoneHook effect check`, {
+          currentId,
+          isLoading,
+          autoCreateEnabled,
+          attemptedFor: attemptedAutoCreateForIdRef.current,
+          hasError: Boolean(error),
+          hasItem: Boolean(item),
+        });
         if (!currentId) return;
         if (isLoading) return;
-        if (!isSingletonAutoCreateEnabledForModel(modelName)) return;
-        if (didAutoCreateRef.current) return;
+        if (!autoCreateEnabled) return;
+        if (attemptedAutoCreateForIdRef.current === currentId) return;
+        if (error) return;
         if (item) return;
 
-        didAutoCreateRef.current = true;
+        attemptedAutoCreateForIdRef.current = currentId;
         // Best-effort: create { id } if missing.
         void (async () => {
           try {
+            debugWarn(`🍬 ${modelName} useSigletoneHook auto-create starting`, {
+              currentId,
+            });
             await singletonService.upsertCurrent({} as any);
-            await core.refresh();
+            await singletonService.getCurrent({ forceRefresh: true });
+            debugLog(`🍬 ${modelName} useSigletoneHook auto-create done`, {
+              currentId,
+            });
           } catch (e) {
-            console.warn(`🍬 ${modelName} useCurrentHook auto-create failed:`, e);
+            attemptedAutoCreateForIdRef.current = null; // allow retry later
+            debugWarn(`🍬 ${modelName} useSigletoneHook auto-create failed:`, e);
           }
         })();
-      }, [currentId, isLoading, item, modelName]);
+      }, [currentId, isLoading, item, modelName, autoCreateEnabled, error]);
 
       const refresh = async (): Promise<T | null> => {
-        if (!currentId) {
-          const { data } = await refetchId({ throwOnError: false });
-          if (!data) return null;
-        }
-        return core.refresh();
+        const latest = await singletonService.getCurrent({ forceRefresh: true });
+        if (latest) return latest;
+
+        if (!autoCreateEnabled) return null;
+
+        // If missing, create then re-fetch to sync cache.
+        await singletonService.upsertCurrent({} as any);
+        return (await singletonService.getCurrent({ forceRefresh: true })) ?? null;
       };
 
       const update = async (data: Partial<T>): Promise<T | null> => {
-        if (!currentId) {
-          const { data } = await refetchId({ throwOnError: false });
-          if (!data) return null;
-        }
-        return core.update(data);
+        // Upsert to satisfy "create if missing" behavior.
+        await singletonService.upsertCurrent(data as any);
+        return (await singletonService.getCurrent({ forceRefresh: true })) ?? null;
       };
 
       const remove = async (): Promise<boolean> => {
-        if (!currentId) {
-          const { data } = await refetchId({ throwOnError: false });
-          if (!data) return false;
+        try {
+          const modelId = await getModelId();
+          return baseService.delete(modelId);
+        } catch (e) {
+          return false;
         }
-        return core.delete();
       };
 
       return { item, isLoading, error, refresh, update, delete: remove };
     },
+
+    // Backward-compatible alias
+    useCurrentHook: (options) => singletonService.useSigletoneHook(options),
   };
 
   return singletonService;

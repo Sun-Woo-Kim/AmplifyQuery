@@ -1,5 +1,11 @@
 import { getClient } from "./client";
-import { getOwnerQueryName, getDefaultAuthMode } from "./config";
+import {
+  getOwnerQueryName,
+  getDefaultAuthMode,
+  debugLog,
+  debugWarn,
+  isDebugEnabled,
+} from "./config";
 import { queryClient } from "./query";
 import {
   AmplifyDataService,
@@ -21,7 +27,7 @@ import {
 } from "@tanstack/react-query";
 import { getCurrentUser } from "aws-amplify/auth";
 import { randomUUID } from "expo-crypto";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // -------------------------------
 // Query key helpers
@@ -34,6 +40,33 @@ function isItemKeyForModel(modelName: string, key: QueryKey): boolean {
   return Array.isArray(key) && key[0] === modelName && key[1] === "item";
 }
 
+function signatureForModelItem(item: any): string {
+  const id = typeof item?.id === "string" ? item.id : "";
+  const updatedAt = typeof item?.updatedAt === "string" ? item.updatedAt : "";
+  const createdAt = typeof item?.createdAt === "string" ? item.createdAt : "";
+  return `${id}::${updatedAt || createdAt}`;
+}
+
+function areItemArraysEquivalentById(a: any[], b: any[]): boolean {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  const mapA = new Map<string, string>();
+  for (const item of a) {
+    const sig = signatureForModelItem(item);
+    const [id, ts] = sig.split("::");
+    if (!id) continue;
+    mapA.set(id, ts || "");
+  }
+  for (const item of b) {
+    const sig = signatureForModelItem(item);
+    const [id, ts] = sig.split("::");
+    if (!id) return false;
+    if (mapA.get(id) !== (ts || "")) return false;
+  }
+  return true;
+}
+
 /**
  * Utility function to get owner value based on authentication mode
  * Sets owner value only in userPool auth mode, returns empty string for other auth modes
@@ -43,15 +76,29 @@ function isItemKeyForModel(modelName: string, key: QueryKey): boolean {
  */
 async function getOwnerByAuthMode(authMode: AuthMode): Promise<{
   owner: string;
+  ownerCandidates: string[];
   authModeParams: { authMode: AuthMode };
 }> {
   let owner = "";
+  let ownerCandidates: string[] = [];
 
   // Set owner value only in userPool auth mode
   if (authMode === "userPool") {
     try {
       const { username, userId } = await getCurrentUser();
-      owner = userId + "::" + username;
+      // Canonical "owner" in Amplify is typically the Cognito user sub / userId.
+      // Some legacy codepaths used `${userId}::${username}`. We keep it as a fallback
+      // candidate so list-by-owner can still find older records.
+      const canonicalOwner = userId;
+      // Avoid useless legacy candidates like `${userId}::${userId}` (can happen depending on username config).
+      const legacyOwner =
+        username && userId && username !== userId ? `${userId}::${username}` : "";
+
+      owner = canonicalOwner;
+      ownerCandidates = [canonicalOwner].filter(Boolean);
+      if (legacyOwner && legacyOwner !== canonicalOwner) {
+        ownerCandidates.push(legacyOwner);
+      }
     } catch (error) {
       console.error("Error getting user authentication info:", error);
       // Continue even if error occurs (API call will fail)
@@ -61,6 +108,7 @@ async function getOwnerByAuthMode(authMode: AuthMode): Promise<{
   // Return with auth mode parameters
   return {
     owner,
+    ownerCandidates,
     authModeParams: { authMode },
   };
 }
@@ -79,18 +127,21 @@ function findRelatedQueryKeys(
   return queryClient
     .getQueryCache()
     .findAll({
-      predicate: ({ queryKey }) => {
+      predicate: (query: { queryKey: QueryKey }) => {
+        const { queryKey } = query;
         // Find all query keys for the model, but EXCLUDE single-item keys
         // Examples kept: [model], [model, 'filter', ...], [model, 'query', ...], [model, Relation, id, ...]
         // Excluded: [model, 'item', id]
         return (
           Array.isArray(queryKey) &&
           queryKey[0] === modelName &&
-          !isItemKeyForModel(modelName, queryKey)
+          !isItemKeyForModel(modelName, queryKey) &&
+          // Also exclude internal singleton key(s) like ["User", "currentId"]
+          queryKey[1] !== "currentId"
         );
       },
     })
-    .map((query) => query.queryKey);
+    .map((query: { queryKey: QueryKey }) => query.queryKey);
 }
 
 /**
@@ -263,6 +314,21 @@ function rollbackCache(
   });
 }
 
+function isOwnerNotInSchemaError(err: unknown): boolean {
+  const msg =
+    typeof (err as any)?.message === "string"
+      ? (err as any).message
+      : String(err);
+
+  // Typical GraphQL validation/input errors mention the field and that it isn't defined.
+  return (
+    /owner/i.test(msg) &&
+    /(not defined|does not exist|unknown|not a valid|not allowed|defined for input)/i.test(
+      msg
+    )
+  );
+}
+
 /**
  * Create model-specific Amplify service
  * @param modelName Model name
@@ -284,7 +350,7 @@ export function createAmplifyService<T extends BaseModel>(
     // Set authentication mode method
     setAuthMode: (authMode: AuthMode): void => {
       currentAuthMode = authMode;
-      console.log(`🔐 ${modelName} service auth mode changed: ${authMode}`);
+      debugLog(`🔐 ${modelName} service auth mode changed: ${authMode}`);
     },
 
     // Get current authentication mode
@@ -314,7 +380,7 @@ export function createAmplifyService<T extends BaseModel>(
         const authMode = options?.authMode || currentAuthMode;
 
         // Get owner and parameters based on auth mode
-        const { authModeParams } = await getOwnerByAuthMode(authMode);
+        const { owner, authModeParams } = await getOwnerByAuthMode(authMode);
 
         const dataWithoutOwner = Utils.removeOwnerField(data as any, "create");
         const cleanedData: Record<string, any> = {};
@@ -381,8 +447,8 @@ export function createAmplifyService<T extends BaseModel>(
                 return [...oldItems, newItem];
               });
             }
-          } else if (queryKey.length < 3) {
-            // Regular list query
+          } else if (queryKey.length === 1) {
+            // Regular list query (e.g. ["User"]). Avoid internal keys like ["User","currentId"].
             const data = queryClient.getQueryData(queryKey);
             if (data) {
               previousDataMap.set(queryKey, data);
@@ -397,13 +463,29 @@ export function createAmplifyService<T extends BaseModel>(
 
         try {
           // Attempt API call - apply auth mode
-          console.log(
+          debugLog(
             `🍬 ${modelName} creation attempt [Auth: ${authMode}]:`,
             newItem.id
           );
-        const { data: createdItem } = await (getClient().models as any)[
-          modelName
-        ].create(newItem, authModeParams);
+        // Many schemas use an owner field for auth. Prefer adding owner when available,
+        // but retry without it if the model doesn't define it.
+        const createPayload: any = owner ? { ...(newItem as any), owner } : newItem;
+        let createdItem: any = null;
+        try {
+          ({ data: createdItem } = await (getClient().models as any)[modelName].create(
+            createPayload,
+            authModeParams
+          ));
+        } catch (e) {
+          if (owner && isOwnerNotInSchemaError(e)) {
+            ({ data: createdItem } = await (getClient().models as any)[modelName].create(
+              newItem,
+              authModeParams
+            ));
+          } else {
+            throw e;
+          }
+        }
 
           if (createdItem) {
             // Update cache on API success
@@ -429,7 +511,7 @@ export function createAmplifyService<T extends BaseModel>(
               refetchType: "active",
             });
 
-            console.log(`🍬 ${modelName} creation successful:`, newItem.id);
+            debugLog(`🍬 ${modelName} creation successful:`, newItem.id);
             return createdItem;
           }
 
@@ -468,7 +550,7 @@ export function createAmplifyService<T extends BaseModel>(
         const authMode = options?.authMode || currentAuthMode;
 
         // Get owner and parameters based on auth mode
-        const { authModeParams } = await getOwnerByAuthMode(authMode);
+        const { owner, authModeParams } = await getOwnerByAuthMode(authMode);
 
         const preparedItems: T[] = dataList
           .map((data) => {
@@ -505,7 +587,7 @@ export function createAmplifyService<T extends BaseModel>(
           }
         }
 
-        console.log(
+        debugLog(
           `🍬 ${modelName} batch creation attempt: ${preparedItems.length} items`
         );
 
@@ -541,8 +623,8 @@ export function createAmplifyService<T extends BaseModel>(
 
               return oldItems; // No change if no items match relation ID
             });
-          } else if (queryKey.length < 3) {
-            // Regular list query - add all items
+          } else if (queryKey.length === 1) {
+            // Regular list query - add all items (e.g. ["User"]). Avoid internal keys like ["User","currentId"].
             queryClient.setQueryData(queryKey, (oldData: any) => {
               const oldItems = Array.isArray(oldData) ? oldData : [];
               return [...oldItems, ...preparedItems];
@@ -563,9 +645,24 @@ export function createAmplifyService<T extends BaseModel>(
           // Parallel API calls - apply auth mode
           const createPromises = preparedItems.map(async (newItem) => {
             try {
-              const { data: createdItem } = await (getClient().models as any)[
-                modelName
-              ].create(newItem, authModeParams);
+              const createPayload: any = owner
+                ? { ...(newItem as any), owner }
+                : newItem;
+
+              let createdItem: any = null;
+              try {
+                ({ data: createdItem } = await (getClient().models as any)[
+                  modelName
+                ].create(createPayload, authModeParams));
+              } catch (e) {
+                if (owner && isOwnerNotInSchemaError(e)) {
+                  ({ data: createdItem } = await (getClient().models as any)[
+                    modelName
+                  ].create(newItem, authModeParams));
+                } else {
+                  throw e;
+                }
+              }
 
               // Update individual item cache on API success
               if (createdItem) {
@@ -595,7 +692,7 @@ export function createAmplifyService<T extends BaseModel>(
           });
 
           const results = await Promise.all(createPromises);
-          console.log(
+          debugLog(
             `🍬 ${modelName} batch creation completed: ${results.length} items`
           );
 
@@ -734,7 +831,7 @@ export function createAmplifyService<T extends BaseModel>(
 
     // Batch get items
     list: async (
-      options = { filter: undefined, forceRefresh: false }
+      options = { filter: undefined, forceRefresh: false, throwOnError: false }
     ): Promise<T[]> => {
       try {
         // Determine query key
@@ -751,8 +848,8 @@ export function createAmplifyService<T extends BaseModel>(
             cachedItems.length > 0 &&
             !queryState?.isInvalidated
           ) {
-            console.log(`🍬 ${modelName} list using cache`, queryKey);
-            return cachedItems.filter((item) => item !== null);
+            debugLog(`🍬 ${modelName} list using cache`, queryKey);
+            return cachedItems.filter((item: any) => item !== null);
           }
         }
 
@@ -760,40 +857,86 @@ export function createAmplifyService<T extends BaseModel>(
         const authMode = options?.authMode || currentAuthMode;
 
         // Get owner and parameters based on auth mode
-        const { owner, authModeParams } = await getOwnerByAuthMode(authMode);
+        const { owner, ownerCandidates, authModeParams } =
+          await getOwnerByAuthMode(authMode);
 
         // Get owner-based query name from global config
         const ownerQueryName = getOwnerQueryName(modelName);
 
         // Try query call
         try {
-          console.log(
+          debugLog(
             `🍬 ${modelName} list API call`,
             queryKey,
             `by ${ownerQueryName}`,
             `[Auth: ${authMode}]`
           );
 
-          // Debug: Check if model and query exist
-          const client = getClient();
-          console.log(`🍬 Debug - client.models exists:`, !!client.models);
-          console.log(
-            `🍬 Debug - client.models[${modelName}] exists:`,
-            !!client.models[modelName]
-          );
-          console.log(
-            `🍬 Debug - client.models[${modelName}][${ownerQueryName}] exists:`,
-            !!(client.models as any)[modelName]?.[ownerQueryName]
-          );
-          console.log(
-            `🍬 Debug - Available methods for ${modelName}:`,
-            Object.keys((client.models as any)[modelName] || {})
-          );
+          if (isDebugEnabled()) {
+            // Debug: Check if model and query exist
+            const client = getClient();
+            debugLog(`🍬 Debug - client.models exists:`, !!client.models);
+            debugLog(
+              `🍬 Debug - client.models[${modelName}] exists:`,
+              !!client.models[modelName]
+            );
+            debugLog(
+              `🍬 Debug - client.models[${modelName}][${ownerQueryName}] exists:`,
+              !!(client.models as any)[modelName]?.[ownerQueryName]
+            );
+            debugLog(
+              `🍬 Debug - Available methods for ${modelName}:`,
+              Object.keys((client.models as any)[modelName] || {})
+            );
+          }
 
-          // Execute owner query
-        const { data: result } = await (getClient().models as any)[modelName][
-          ownerQueryName
-        ]({ owner, authMode }, authModeParams);
+          const client = getClient();
+          const model = (client.models as any)?.[modelName];
+
+          // Execute owner query (try canonical owner first, then legacy owner formats)
+          const ownersToTry =
+            Array.isArray(ownerCandidates) && ownerCandidates.length > 0
+              ? ownerCandidates
+              : owner
+                ? [owner]
+                : [];
+
+          if (!model?.[ownerQueryName] || ownersToTry.length === 0) {
+            throw new Error(
+              `owner query not available or owner missing: ${modelName}.${ownerQueryName}`
+            );
+          }
+
+          let result: any = null;
+          let usedOwner: string | null = null;
+          for (const candidateOwner of ownersToTry) {
+            debugLog(
+              `🍬 ${modelName} list owner-query attempt`,
+              `[${ownerQueryName}]`,
+              { owner: candidateOwner, authMode }
+            );
+            // Generated secondary index query typically expects { owner } only.
+            const { data } = await model[ownerQueryName](
+              { owner: candidateOwner },
+              authModeParams
+            );
+            const items = (data?.items || data?.data || data || []).filter(
+              (item: any) => item !== null
+            );
+            if (items.length > 0) {
+              result = data;
+              usedOwner = candidateOwner;
+              break;
+            }
+            // If empty, try next candidate (legacy owner format)
+          }
+
+          if (usedOwner && usedOwner !== ownersToTry[0]) {
+            debugWarn(
+              `🍬 ${modelName} list: owner-query returned results only for legacy owner format`,
+              { tried: ownersToTry, usedOwner }
+            );
+          }
 
           // Extract result data + filter null values
           const items = (result?.items || result?.data || result || []).filter(
@@ -853,7 +996,9 @@ export function createAmplifyService<T extends BaseModel>(
           if (
             (error as any)?.message?.includes("not found") ||
             (error as any)?.message?.includes("is not a function") ||
-            (error as any)?.message?.includes("is undefined")
+            (error as any)?.message?.includes("is undefined") ||
+            (error as any)?.message?.includes("owner query not available") ||
+            (error as any)?.message?.includes("owner missing")
           ) {
             console.warn(
               `🍬 ${ownerQueryName} query not found. Trying default list query...`
@@ -923,7 +1068,7 @@ export function createAmplifyService<T extends BaseModel>(
           throw error; // Pass other errors to upper catch
         }
       } catch (error) {
-        console.log("🍬 error", error);
+        debugLog("🍬 error", error);
         console.error(`🍬 ${modelName} list error:`, error);
         // Invalidate list query cache on error
         const queryKey: QueryKey = [
@@ -932,6 +1077,7 @@ export function createAmplifyService<T extends BaseModel>(
           JSON.stringify(options.filter),
         ];
         queryClient.invalidateQueries({ queryKey });
+        if (options?.throwOnError) throw error;
         return [];
       }
     },
@@ -980,7 +1126,7 @@ export function createAmplifyService<T extends BaseModel>(
 
         try {
           // Attempt API call - apply auth mode
-          console.log(
+          debugLog(
             `🍬 ${modelName} update attempt [Auth: ${authMode}]:`,
             itemId
           );
@@ -1004,7 +1150,7 @@ export function createAmplifyService<T extends BaseModel>(
               refetchType: "active",
             });
 
-            console.log(`🍬 ${modelName} update success:`, itemId);
+            debugLog(`🍬 ${modelName} update success:`, itemId);
             return updatedItem;
           } else {
             console.warn(
@@ -1075,7 +1221,7 @@ export function createAmplifyService<T extends BaseModel>(
 
         try {
           // API call - apply auth mode
-          console.log(
+          debugLog(
             `🍬 ${modelName} delete attempt [Auth: ${authMode}]:`,
             id
           );
@@ -1083,7 +1229,7 @@ export function createAmplifyService<T extends BaseModel>(
             { id },
             authModeParams
           );
-          console.log(`🍬 ${modelName} delete success:`, id);
+          debugLog(`🍬 ${modelName} delete success:`, id);
 
           // On API success, invalidate all related queries to automatically refresh
           relatedQueryKeys.forEach((queryKey) =>
@@ -1171,7 +1317,7 @@ export function createAmplifyService<T extends BaseModel>(
         });
 
         try {
-          console.log(
+          debugLog(
             `🍬 ${modelName} batch delete attempt [Auth: ${authMode}]: ${ids.length} items`
           );
           // Parallel API calls - apply auth mode
@@ -1246,7 +1392,7 @@ export function createAmplifyService<T extends BaseModel>(
             queryClient.invalidateQueries({ queryKey: itemKey(modelName, id) })
           );
 
-          console.log(
+          debugLog(
             `🍬 ${modelName} batch delete: ${results.success.length} items deleted, ${results.failed.length} items failed`
           );
           return results;
@@ -1315,7 +1461,7 @@ export function createAmplifyService<T extends BaseModel>(
         try {
           if (existingItem) {
             // Use update logic if item exists - apply auth mode
-            console.log(
+            debugLog(
               `🍬 ${modelName} upsert(update) attempt [Auth: ${authMode}]:`,
               data.id
             );
@@ -1330,7 +1476,7 @@ export function createAmplifyService<T extends BaseModel>(
                 data.id,
                 updatedItem
               );
-              console.log(`🍬 ${modelName} upsert(update) success:`, data.id);
+              debugLog(`🍬 ${modelName} upsert(update) success:`, data.id);
               return updatedItem;
             } else {
               console.warn(
@@ -1344,7 +1490,7 @@ export function createAmplifyService<T extends BaseModel>(
             }
           } else {
             // Use create logic if item doesn't exist - apply auth mode
-            console.log(
+            debugLog(
               `🍬 ${modelName} upsert(create) attempt [Auth: ${authMode}]:`,
               data.id
             );
@@ -1359,7 +1505,7 @@ export function createAmplifyService<T extends BaseModel>(
                 data.id,
                 createdItem
               );
-              console.log(`🍬 ${modelName} upsert(create) success:`, data.id);
+              debugLog(`🍬 ${modelName} upsert(create) success:`, data.id);
               return createdItem;
             } else {
               console.warn(
@@ -1391,7 +1537,7 @@ export function createAmplifyService<T extends BaseModel>(
     customList: async (
       queryName: string,
       args: Record<string, any>,
-      options = { forceRefresh: false }
+      options = { forceRefresh: false, throwOnError: false }
     ): Promise<T[]> => {
       try {
         // Determine auth mode (use provided options if available)
@@ -1440,12 +1586,12 @@ export function createAmplifyService<T extends BaseModel>(
         if (!options.forceRefresh) {
           const cachedItems = queryClient.getQueryData<T[]>(queryKey);
           if (cachedItems && cachedItems.length > 0) {
-            console.log(`🍬 ${modelName} ${queryName} using cache`);
-            return cachedItems.filter((item) => item !== null);
+            debugLog(`🍬 ${modelName} ${queryName} using cache`);
+            return cachedItems.filter((item: any) => item !== null);
           }
         }
 
-        console.log(
+        debugLog(
           `🍬 ${modelName} customList call [Auth: ${authMode}]:`,
           queryName,
           enhancedArgs
@@ -1463,7 +1609,7 @@ export function createAmplifyService<T extends BaseModel>(
 
         // Extract result data
         const items = result?.items || result?.data || result || [];
-        console.log(
+        debugLog(
           `🍬 ${modelName} ${queryName} result:`,
           items.length,
           "items"
@@ -1522,6 +1668,7 @@ export function createAmplifyService<T extends BaseModel>(
             queryClient.invalidateQueries({ queryKey });
           }
         }
+        if (options?.throwOnError) throw error;
         return [];
       }
     },
@@ -1590,28 +1737,52 @@ export function createAmplifyService<T extends BaseModel>(
       // Determine query function
       const queryFn = useCallback(
         async (context: QueryFunctionContext<QueryKey>): Promise<T[]> => {
+          debugLog(`🍬 ${modelName} useHook queryFn called`, {
+            queryKey,
+            isRefetch: context.meta?.refetch,
+            customList: options?.customList?.queryName,
+          });
+          
           if (options?.customList) {
-            console.log(
+            debugLog(
               `🍬 ${modelName} useHook customList call:`,
               options.customList.queryName,
               options.customList.args,
               options.customList.forceRefresh
             );
-            return service.customList(
+            const result = await service.customList(
               options.customList.queryName,
               options.customList.args,
               { forceRefresh: options.customList.forceRefresh }
             );
+            debugLog(
+              `🍬 ${modelName} useHook customList result:`,
+              result?.length || 0,
+              "items"
+            );
+            return result;
           }
 
           if (options?.initialFetchOptions?.filter) {
-            return service.list({
+            const result = await service.list({
               filter: options.initialFetchOptions.filter,
               forceRefresh: true,
             });
+            debugLog(
+              `🍬 ${modelName} useHook list (filtered) result:`,
+              result?.length || 0,
+              "items"
+            );
+            return result;
           }
 
-          return service.list();
+          const result = await service.list();
+          debugLog(
+            `🍬 ${modelName} useHook list result:`,
+            result?.length || 0,
+            "items"
+          );
+          return result;
         },
         [
           options?.initialFetchOptions?.filter,
@@ -1619,6 +1790,8 @@ export function createAmplifyService<T extends BaseModel>(
           options?.customList?.args,
           options?.customList?.forceRefresh,
           service,
+          modelName,
+          queryKey,
         ]
       );
 
@@ -1631,9 +1804,20 @@ export function createAmplifyService<T extends BaseModel>(
         queryFn,
         enabled: options?.initialFetchOptions?.fetch !== false && !realtimeEnabled,
         staleTime: 1000 * 30, // Keep fresh for 30 seconds (refresh more frequently)
+        gcTime: 1000 * 60 * 5, // Keep in cache for 5 minutes (prevents data from being garbage collected)
         refetchOnMount: true, // Refetch on component mount
         refetchOnWindowFocus: false, // Don't auto-refetch on window focus
         refetchOnReconnect: true, // Refetch on network reconnect
+        // Keep previous data during refetch to prevent UI flicker
+        // This ensures data persists during refetch operations
+        placeholderData: (previousData: T[] | undefined) => {
+          debugLog(
+            `🍬 ${modelName} useHook placeholderData called - previous data:`,
+            previousData?.length || 0,
+            "items"
+          );
+          return previousData;
+        },
       };
 
       const [isSynced, setIsSynced] = useState<boolean | undefined>(undefined);
@@ -1644,6 +1828,35 @@ export function createAmplifyService<T extends BaseModel>(
         error,
         refetch,
       } = useQuery<T[], Error, T[], QueryKey>(queryOptions);
+
+      // Log data changes (debug only) - avoid spamming when nothing changed
+      const lastDebugStateRef = useRef<{
+        itemsCount: number;
+        isLoading: boolean;
+        hasError: boolean;
+      } | null>(null);
+      useEffect(() => {
+        if (!isDebugEnabled()) return;
+        const nextState = {
+          itemsCount: items?.length || 0,
+          isLoading: Boolean(isLoading),
+          hasError: Boolean(error),
+        };
+        const prev = lastDebugStateRef.current;
+        if (
+          prev &&
+          prev.itemsCount === nextState.itemsCount &&
+          prev.isLoading === nextState.isLoading &&
+          prev.hasError === nextState.hasError
+        ) {
+          return;
+        }
+        lastDebugStateRef.current = nextState;
+        debugLog(`🍬 ${modelName} useHook data changed:`, {
+          ...nextState,
+          queryKey,
+        });
+      }, [items?.length, isLoading, error, modelName, queryKey]);
 
       useEffect(() => {
         if (!realtimeEnabled) return;
@@ -1737,6 +1950,7 @@ export function createAmplifyService<T extends BaseModel>(
         }
 
         let isMounted = true;
+        let lastSynced: boolean | undefined = undefined;
         const subscription = model.observeQuery(observeOptions).subscribe({
           next: ({ items: nextItems, isSynced: synced }: any) => {
             if (!isMounted) return;
@@ -1746,21 +1960,19 @@ export function createAmplifyService<T extends BaseModel>(
 
             const previousItems =
               hookQueryClient.getQueryData<T[]>(queryKey) || [];
-            const previousIds = new Set(
-              previousItems.map((item: any) => item?.id).filter(Boolean)
-            );
-            const nextIds = new Set(
-              safeItems.map((item: any) => item?.id).filter(Boolean)
-            );
 
-            previousIds.forEach((id) => {
-              if (!nextIds.has(id)) {
-                hookQueryClient.removeQueries({
-                  queryKey: itemKey(modelName, id),
-                  exact: true,
-                });
-              }
-            });
+            const nextSynced = Boolean(synced);
+            if (lastSynced !== nextSynced) {
+              lastSynced = nextSynced;
+              setIsSynced(nextSynced);
+            }
+
+            // Avoid cache thrash: observeQuery can emit repeatedly even when data didn't change.
+            if (
+              areItemArraysEquivalentById(previousItems as any, safeItems as any)
+            ) {
+              return;
+            }
 
             hookQueryClient.setQueryData(queryKey, safeItems);
             safeItems.forEach((item: any) => {
@@ -1771,8 +1983,6 @@ export function createAmplifyService<T extends BaseModel>(
                 );
               }
             });
-
-            setIsSynced(Boolean(synced));
           },
           error: (err: any) => {
             console.error(
@@ -1911,46 +2121,81 @@ export function createAmplifyService<T extends BaseModel>(
 
       const refresh = useCallback(
         async (refreshOptions?: { filter?: Record<string, any> }) => {
-          console.log(`🍬 ${modelName} useHook refresh called`, queryKey);
-          // IMPORTANT:
-          // TanStack Query's refetch() re-runs queryFn, but our service.list/customList can short-circuit
-          // and return cached data unless forceRefresh is true.
-          // refresh() must guarantee a network fetch to reflect server-side updates.
+          debugLog(`🍬 ${modelName} useHook refresh called`, queryKey);
+          
+          // IMPORTANT: refresh must always fetch from server (no cache).
+          // We do this by calling service.list/customList with forceRefresh: true.
+          const currentData = hookQueryClient.getQueryData<T[]>(queryKey);
+          debugLog(
+            `🍬 ${modelName} useHook refresh - current data before server refresh:`,
+            currentData?.length || 0,
+            "items"
+          );
+
           try {
-            if (options?.customList) {
-              return await service.customList(
-                options.customList.queryName,
-                options.customList.args,
-                { forceRefresh: true }
+            // If filter is provided and different from current filter, we'd need a new query key.
+            // For now, we ignore refreshOptions.filter and refresh the current hook query only.
+            if (refreshOptions?.filter) {
+              console.warn(
+                `🍬 ${modelName} useHook refresh: refreshOptions.filter is currently ignored (queryKey is fixed per hook instance).`
               );
             }
 
-            const mergedFilter =
-              refreshOptions?.filter ?? options?.initialFetchOptions?.filter;
+            let newData: T[] = [];
 
-            if (mergedFilter) {
-              return await service.list({
-                filter: mergedFilter,
+            if (options?.customList) {
+              newData = await service.customList(
+                options.customList.queryName,
+                options.customList.args,
+                { forceRefresh: true, throwOnError: true }
+              );
+            } else if (options?.initialFetchOptions?.filter) {
+              newData = await service.list({
+                filter: options.initialFetchOptions.filter,
                 forceRefresh: true,
+                throwOnError: true,
+              });
+            } else {
+              newData = await service.list({
+                forceRefresh: true,
+                throwOnError: true,
               });
             }
 
-            return await service.list({ forceRefresh: true });
+            debugLog(
+              `🍬 ${modelName} useHook refresh - server refresh result:`,
+              newData?.length || 0,
+              "items"
+            );
+
+            // Keep hook cache in sync with hook's queryKey.
+            hookQueryClient.setQueryData(queryKey, newData);
+            return newData || [];
           } catch (e) {
-            // Keep previous behavior of surfacing errors via refetch when desired
-            // while still logging consistently.
             console.error(`🍬 ${modelName} useHook refresh error:`, e);
-            throw e;
+            // On error, restore previous data if available (prevents list flashing empty)
+            if (currentData && currentData.length > 0) {
+              hookQueryClient.setQueryData(queryKey, currentData);
+              return currentData;
+            }
+            return [];
           }
         },
-        [modelName, options?.customList, options?.initialFetchOptions?.filter, queryKey, service]
+        [
+          modelName,
+          queryKey,
+          hookQueryClient,
+          service,
+          options?.customList,
+          options?.initialFetchOptions?.filter,
+        ]
       );
 
       const customListFn = useCallback(
         async (
           queryName: string,
           args: Record<string, any>,
-          options?: { forceRefresh?: boolean }
+          options?: { forceRefresh?: boolean; throwOnError?: boolean }
         ): Promise<T[]> => {
           try {
             const result = await service.customList(queryName, args, options);
@@ -1988,7 +2233,10 @@ export function createAmplifyService<T extends BaseModel>(
       }
     ): ItemHook<T> => {
       const hookQueryClient = useQueryClient();
-      const singleItemQueryKey: QueryKey = itemKey(modelName, id);
+      // Runtime safety: avoid non-string ids creating broken query keys like
+      // ["User","item",[...]] which can cause cache thrash/flicker.
+      const safeId = typeof id === "string" ? id : "";
+      const singleItemQueryKey: QueryKey = itemKey(modelName, safeId);
       const realtimeEnabled = options?.realtime?.enabled === true;
 
       // First check data from cache
@@ -2002,20 +2250,17 @@ export function createAmplifyService<T extends BaseModel>(
         console.warn(
           `🍬 ${modelName} useItemHook: Cache contains array instead of single item. Finding matching item.`
         );
-        const matchingItem = rawCachedData.find((item: any) => item?.id === id);
+        const matchingItem = rawCachedData.find(
+          (item: any) => item?.id === safeId
+        );
         cachedData = matchingItem || undefined;
-        // 배열이 캐시되어 있으면 조용히 캐시를 제거 (무한 루프 방지)
-        setTimeout(() => {
-          hookQueryClient.removeQueries({
-            queryKey: singleItemQueryKey,
-            exact: true,
-          });
-        }, 0);
+        // Normalize the cache in-place instead of deleting it (deleting causes UI flicker).
+        hookQueryClient.setQueryData(singleItemQueryKey, matchingItem ?? null);
       } else if (rawCachedData && (rawCachedData as any)?.id === id) {
         cachedData = rawCachedData as T;
       } else if (rawCachedData) {
         console.warn(
-          `🍬 ${modelName} useItemHook: Cache ID mismatch! Requested: ${id}, Cached: ${
+          `🍬 ${modelName} useItemHook: Cache ID mismatch! Requested: ${safeId}, Cached: ${
             (rawCachedData as any)?.id
           }. Ignoring cached data.`
         );
@@ -2030,12 +2275,12 @@ export function createAmplifyService<T extends BaseModel>(
         refetch,
       } = useQuery<T | null, Error, T | null, QueryKey>({
         queryKey: singleItemQueryKey,
-        queryFn: () => service.get(id),
+        queryFn: () => service.get(safeId),
         initialData: cachedData, // Use cached data as initial value if available
         staleTime: 1000 * 60, // Keep data "fresh" for 1 minute
         refetchOnMount: cachedData ? false : true, // Only refetch if no cached data
         refetchOnWindowFocus: false, // Disable window focus refetch to prevent loops
-        enabled: !!id && !realtimeEnabled, // Only enable query when id exists
+        enabled: !!safeId && !realtimeEnabled, // Only enable query when id exists
       });
 
       const [isSynced, setIsSynced] = useState<boolean | undefined>(undefined);
@@ -2061,6 +2306,11 @@ export function createAmplifyService<T extends BaseModel>(
         }
 
         let isMounted = true;
+        let lastSynced: boolean | undefined = undefined;
+        // observeQuery can temporarily emit empty items during sync/reconnect, even when the item
+        // still exists on the server. If we immediately set the cache to null, UI flickers.
+        // When observeQuery reports "missing", confirm with a server get (forceRefresh) before clearing.
+        let lastMissingConfirmAt = 0;
         const subscription = model.observeQuery(observeOptions).subscribe({
           next: ({ items: nextItems, isSynced: synced }: any) => {
             if (!isMounted) return;
@@ -2068,6 +2318,42 @@ export function createAmplifyService<T extends BaseModel>(
               ? nextItems.filter(Boolean)
               : [];
             const nextItem = safeItems.find((entry: any) => entry?.id === id) || null;
+
+            const nextSynced = Boolean(synced);
+            if (lastSynced !== nextSynced) {
+              lastSynced = nextSynced;
+              setIsSynced(nextSynced);
+            }
+
+            const prevItem = hookQueryClient.getQueryData<any>(singleItemQueryKey);
+            if (!nextItem) {
+              // Never clear immediately. During sync/reconnect observeQuery can be temporarily empty.
+              if (!nextSynced) return;
+              const now = Date.now();
+              // Throttle server confirmations to avoid loops.
+              if (now - lastMissingConfirmAt < 2000) return;
+              lastMissingConfirmAt = now;
+              void (async () => {
+                try {
+                  const latest = await service.get(id, { forceRefresh: true });
+                  if (!isMounted) return;
+                  if (latest) {
+                    hookQueryClient.setQueryData(singleItemQueryKey, latest);
+                  } else {
+                    hookQueryClient.setQueryData(singleItemQueryKey, null);
+                  }
+                } catch (e) {
+                  // If confirm fails, keep existing cache (avoid flicker)
+                  debugWarn(`🍬 ${modelName} useItemHook realtime missing confirm error:`, e);
+                }
+              })();
+              return;
+            }
+
+            if (signatureForModelItem(prevItem) === signatureForModelItem(nextItem)) {
+              // Avoid thrashing caches when observeQuery emits identical item repeatedly
+              return;
+            }
 
             const relatedQueryKeys = findRelatedQueryKeys(
               modelName,
@@ -2094,20 +2380,8 @@ export function createAmplifyService<T extends BaseModel>(
                   return oldItems;
                 });
               });
-            } else {
-              hookQueryClient.setQueryData(singleItemQueryKey, null);
-              relatedQueryKeys.forEach((queryKey) => {
-                if (isItemKeyForModel(modelName, queryKey)) {
-                  return;
-                }
-                hookQueryClient.setQueryData(queryKey, (oldData: any) => {
-                  const oldItems = Array.isArray(oldData) ? oldData : [];
-                  return oldItems.filter((entry: any) => entry?.id !== id);
-                });
-              });
             }
 
-            setIsSynced(Boolean(synced));
           },
           error: (err: any) => {
             console.error(
@@ -2146,17 +2420,35 @@ export function createAmplifyService<T extends BaseModel>(
 
       // Interface function implementations
       const refreshItem = useCallback(async (): Promise<T | null> => {
-        console.log(
+        debugLog(
           `🍬 ${modelName} useItemHook refresh called`,
           singleItemQueryKey
         );
-        // IMPORTANT:
-        // refetch() re-runs queryFn which calls service.get(id) (default forceRefresh=false).
-        // If cache exists, service.get will return cached data and never hit the network.
-        // refresh() must guarantee a network fetch to reflect server-side updates.
-        const latest = await service.get(id, { forceRefresh: true });
-        return latest || null;
-      }, [id, modelName, service, singleItemQueryKey]); // Added id/modelName for correctness
+        // IMPORTANT: Use hookQueryClient.refetchQueries() or refetch() instead of service.get()
+        // to ensure we're updating the same QueryClient instance that useQuery uses.
+        // This prevents data from disappearing during refetch.
+        try {
+          // First, fetch fresh data with forceRefresh
+          const latest = await service.get(id, { forceRefresh: true });
+          
+          // Update the hookQueryClient cache to sync with the fetched data
+          if (latest) {
+            hookQueryClient.setQueryData(singleItemQueryKey, latest);
+          } else {
+            hookQueryClient.setQueryData(singleItemQueryKey, null);
+          }
+          
+          // Also trigger refetch to ensure UI updates
+          await refetch();
+          
+          return latest || null;
+        } catch (error) {
+          console.error(`🍬 ${modelName} useItemHook refresh error:`, error);
+          // On error, still try to refetch to get current state
+          const refetchResult = await refetch();
+          return (refetchResult.data as T | null) || null;
+        }
+      }, [id, modelName, service, singleItemQueryKey, hookQueryClient, refetch]);
 
       const updateItem = useCallback(
         async (data: Partial<T>): Promise<T | null> => {

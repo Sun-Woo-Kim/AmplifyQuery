@@ -33,7 +33,7 @@ export type ModelHook<T> = {
   customList: (
     queryName: string,
     args: Record<string, any>,
-    options?: { forceRefresh?: boolean }
+    options?: { forceRefresh?: boolean; throwOnError?: boolean }
   ) => Promise<T[]>;
 };
 
@@ -84,12 +84,13 @@ export interface AmplifyDataService<T> {
     filter?: Record<string, any>;
     forceRefresh?: boolean;
     authMode?: AuthMode;
+    throwOnError?: boolean;
   }) => Promise<T[]>;
 
   customList: (
     queryName: string,
     args: Record<string, any>,
-    options?: { forceRefresh?: boolean; authMode?: AuthMode }
+    options?: { forceRefresh?: boolean; authMode?: AuthMode; throwOnError?: boolean }
   ) => Promise<T[]>;
 
   update: (
@@ -163,9 +164,28 @@ export interface SingletonAmplifyService<T> extends AmplifyDataService<T> {
   getCurrent: (options?: { forceRefresh?: boolean }) => Promise<T | null>;
   updateCurrent: (data: Partial<T>) => Promise<T | null>;
   upsertCurrent: (data: Partial<T>) => Promise<T | null>;
+
   // Hook for managing current singleton item
+  useSigletoneHook: (
+    options?: {
+      /**
+       * When true (default), if the singleton item does not exist it will be created.
+       * You can set false to disable auto-create for this hook call.
+       */
+      autoCreate?: boolean;
+      realtime?: {
+        enabled?: boolean;
+        observeOptions?: Record<string, any>;
+      };
+    }
+  ) => ItemHook<T>;
+
+  /**
+   * @deprecated Use useSigletoneHook() instead.
+   */
   useCurrentHook: (
     options?: {
+      autoCreate?: boolean;
       realtime?: {
         enabled?: boolean;
         observeOptions?: Record<string, any>;
@@ -199,10 +219,16 @@ export interface AmplifyQueryConfig {
   client: GraphQLClient;
   defaultAuthMode?: AuthMode;
 
+  /**
+   * Enable AmplifyQuery internal debug logs.
+   * Default: false.
+   */
+  debug?: boolean;
+
   // Model owner query mapping for global configuration
   modelOwnerQueryMap?: Record<string, string>;
 
-  // Singleton auto-create (when useCurrentHook finds no item)
+  // Singleton auto-create (when singleton hook finds no item)
   singletonAutoCreate?: {
     enabled?: boolean;
     models?: string[]; // if omitted, applies to all singleton services

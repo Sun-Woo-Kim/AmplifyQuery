@@ -15,7 +15,6 @@ import { createSingletonService, getModelIds } from "./singleton";
 import { AmplifyDataService, AmplifyQueryConfig, BaseModel } from "./types";
 import {
   AuthService as AuthServiceUtil,
-  StorageService as StorageServiceUtil,
   Utils as UtilsHelper,
   createRelationalHook,
   setAppUrl,
@@ -28,6 +27,8 @@ import {
   getDefaultAuthMode,
   resetConfig,
   setSingletonAutoCreate,
+  setDebug,
+  debugLog,
 } from "./config";
 
 /**
@@ -54,6 +55,11 @@ import {
  * ```
  */
 export function configure(config: AmplifyQueryConfig): void {
+  // Debug flag first (affects internal logs)
+  if (typeof config.debug === "boolean") {
+    setDebug(config.debug);
+  }
+
   // Configure Amplify client
   if (config.client) {
     setClient(config.client);
@@ -81,7 +87,7 @@ export function configure(config: AmplifyQueryConfig): void {
     storage: config.storage,
   });
 
-  console.log("🔌 AmplifyQuery initialized successfully.");
+  debugLog("🔌 AmplifyQuery initialized successfully.");
 }
 
 // Re-export types
@@ -107,7 +113,6 @@ export * from "./provider";
 
 // Re-export utility services
 export const Utils = UtilsHelper;
-export const Storage = StorageServiceUtil;
 export const Auth = AuthServiceUtil;
 export { setAppUrl, getAppUrl };
 
@@ -121,7 +126,6 @@ export const AmplifyQuery = {
   createSingletonService,
   createRelationalHook,
   Utils: UtilsHelper,
-  Storage: StorageServiceUtil,
   Auth: AuthServiceUtil,
   getModelIds,
   getQueryClient,

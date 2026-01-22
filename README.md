@@ -159,6 +159,17 @@ const UserSettingsService =
     AmplifyQuery.createAmplifyService<UserSettingsModel>("UserSettings"),
     AmplifyQuery.getModelIds.UserSettings
   );
+
+// Singleton hook (recommended)
+const {
+  item: settings,
+  isLoading: isSettingsLoading,
+  update: upsertSettings, // creates if missing
+  refresh: refreshSettings,
+} = UserSettingsService.useSigletoneHook();
+
+// Legacy alias (deprecated)
+// UserSettingsService.useCurrentHook()
 ```
 
 ### 4. Data Fetching and Saving

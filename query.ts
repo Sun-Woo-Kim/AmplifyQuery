@@ -1,6 +1,5 @@
-import { MMKV } from "react-native-mmkv";
 import { QueryClient, QueryClientConfig } from "@tanstack/react-query";
-import { persistQueryClient } from "@tanstack/react-query-persist-client";
+import { debugLog } from "./config";
 
 // Default configuration values
 type ConfigOptions = {
@@ -42,16 +41,40 @@ const config: ConfigOptions = {
 };
 
 // MMKV instance
-let storageInstance: MMKV; // Renamed from 'storage' to avoid conflict with ConfigOptions.storage
+type MmkvLike = {
+  set: (key: string, value: any) => void;
+  getString: (key: string) => string | undefined;
+  remove?: (key: string) => boolean;
+  delete?: (key: string) => void;
+  clearAll?: () => void;
+};
+
+let storageInstance: MmkvLike | null = null; // Renamed from 'storage' to avoid conflict with ConfigOptions.storage
+
+function getOrCreateMmkv(id: string): MmkvLike {
+  if (storageInstance) return storageInstance;
+
+  // Support both react-native-mmkv v3 (class MMKV) and v4 (createMMKV factory)
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const mmkv: any = require("react-native-mmkv");
+  if (typeof mmkv.createMMKV === "function") {
+    const created: MmkvLike = mmkv.createMMKV({ id });
+    storageInstance = created;
+    return created;
+  }
+  if (typeof mmkv.MMKV === "function") {
+    const created: MmkvLike = new mmkv.MMKV({ id });
+    storageInstance = created;
+    return created;
+  }
+  throw new Error("react-native-mmkv is not available in this runtime");
+}
 
 // Function to create MMKV persister
 function createMmkvPersister() {
   // Initialize or reuse MMKV instance
-  if (!storageInstance) {
-    storageInstance = new MMKV({
-      id: config.storage?.mmkvId || "mmkv.amplify-query.cache",
-    });
-  }
+  const mmkvId = config.storage?.mmkvId || "mmkv.amplify-query.cache";
+  const storage = getOrCreateMmkv(mmkvId);
 
   // Check cache key
   const cacheKey = config.storage?.cacheKey || "REACT_QUERY_OFFLINE_CACHE";
@@ -61,14 +84,14 @@ function createMmkvPersister() {
       try {
         // Convert object to JSON string
         const clientStr = JSON.stringify(client);
-        storageInstance.set(cacheKey, clientStr);
+        storage.set(cacheKey, clientStr);
       } catch (error) {
         console.error("Error saving cache:", error);
       }
     },
     restoreClient: () => {
       try {
-        const clientStr = storageInstance.getString(cacheKey);
+        const clientStr = storage.getString(cacheKey);
         if (!clientStr) return null;
 
         // Convert string back to object
@@ -80,7 +103,15 @@ function createMmkvPersister() {
     },
     removeClient: () => {
       try {
-        storageInstance.delete(cacheKey);
+        // v3 uses delete(), v4 uses remove()
+        if (typeof storage.remove === "function") {
+          storage.remove(cacheKey);
+        } else if (typeof storage.delete === "function") {
+          storage.delete(cacheKey);
+        } else if (typeof storage.clearAll === "function") {
+          // As a last resort, clear all
+          storage.clearAll();
+        }
       } catch (error) {
         console.error("Error removing cache:", error);
       }
@@ -123,27 +154,35 @@ export function configure(options: ConfigOptions = {}) {
 
   // Apply caching config
   if (config.isCachingEnabled) {
-    console.log("🏃‍♀️ React Query offline cache is enabled with MMKV.");
+    debugLog("🏃‍♀️ React Query offline cache is enabled with MMKV.");
 
     // Create new persister if config changed
     const mmkvPersister = createMmkvPersister();
 
-    persistQueryClient({
-      queryClient,
-      persister: mmkvPersister as any,
-      // Additional options
-      maxAge: config.storage?.maxAge || 1000 * 60 * 60 * 24 * 7, // Default 7 days
-      dehydrateOptions: {
-        shouldDehydrateQuery: (query: any) => {
-          // Only persist successful queries to reduce hydration cancellation noise
-          if (query.state?.status !== "success") return false;
-          // Avoid persisting mutation-like or transient keys if needed later
-          return true;
+    try {
+      // Lazy-load persistQueryClient to avoid hard dependency resolution at build time.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { persistQueryClient } = require("@tanstack/react-query-persist-client");
+
+      persistQueryClient({
+        queryClient,
+        persister: mmkvPersister as any,
+        // Additional options
+        maxAge: config.storage?.maxAge || 1000 * 60 * 60 * 24 * 7, // Default 7 days
+        dehydrateOptions: {
+          shouldDehydrateQuery: (query: any) => {
+            // Only persist successful queries to reduce hydration cancellation noise
+            if (query.state?.status !== "success") return false;
+            // Avoid persisting mutation-like or transient keys if needed later
+            return true;
+          },
         },
-      },
-    });
+      });
+    } catch (e) {
+      console.error("Error setting up React Query persistence:", e);
+    }
   } else {
-    console.log("🏃‍♀️ React Query offline cache is disabled via flag.");
+    debugLog("🏃‍♀️ React Query offline cache is disabled via flag.");
   }
 }
 
