@@ -76,56 +76,18 @@ function areItemArraysEquivalentById(a: any[], b: any[]): boolean {
  */
 async function getOwnerByAuthMode(authMode: AuthMode): Promise<{
   owner: string;
-  ownerCandidates: string[];
   authModeParams: { authMode: AuthMode };
 }> {
   let owner = "";
-  let ownerCandidates: string[] = [];
 
   // Set owner value only in userPool auth mode
   if (authMode === "userPool") {
     try {
       const { username, userId } = await getCurrentUser();
-      // IMPORTANT:
-      // In this workspace we standardize on the default Amplify owner claim:
-      // `cognito:username` (i.e. `username` from getCurrentUser()).
-      //
-      // This prevents a common bug where some records are written with `sub` (userId)
-      // while the owner secondary index is queried with `username`, or vice versa,
-      // causing refetch to "lose" most items and overwrite cache with a partial list.
-      const canonicalUsername = typeof username === "string" ? username : "";
-      const canonicalSub = typeof userId === "string" ? userId : "";
-      const legacyOwner =
-        canonicalSub && canonicalUsername && canonicalUsername !== canonicalSub
-          ? `${canonicalSub}::${canonicalUsername}`
-          : "";
-
-      // Preferred owner value for create/update payloads.
-      owner = canonicalUsername || canonicalSub;
-
-      // Preferred owner candidates for list-by-owner queries.
-      // If username is available, ONLY use username-based owner to keep list results consistent.
-      // If username is missing for some reason, fall back to sub to avoid total failure.
-      const candidates = canonicalUsername
-        ? [canonicalUsername, legacyOwner]
-        : [canonicalSub];
-
-      ownerCandidates = Array.from(
-        new Set(
-          candidates.filter(
-            (v): v is string => typeof v === "string" && v.length > 0
-          )
-        )
-      );
-
-      // Debug: surface the actual Cognito identifiers in dev logs
-      debugLog(`🍬 Auth identity resolved`, {
-        authMode,
-        username,
-        userId,
-        owner,
-        ownerCandidates,
-      });
+      // Keep behavior consistent with old-AmplifyQuery:
+      // owner = `${userId}::${username}`
+      owner = `${userId}::${username}`;
+      debugLog(`🍬 Auth identity resolved`, { authMode, username, userId, owner });
     } catch (error) {
       console.error("Error getting user authentication info:", error);
       // Continue even if error occurs (API call will fail)
@@ -135,7 +97,6 @@ async function getOwnerByAuthMode(authMode: AuthMode): Promise<{
   // Return with auth mode parameters
   return {
     owner,
-    ownerCandidates,
     authModeParams: { authMode },
   };
 }
@@ -406,8 +367,8 @@ export function createAmplifyService<T extends BaseModel>(
         // Determine auth mode (use provided option if available)
         const authMode = options?.authMode || currentAuthMode;
 
-        // Get owner and parameters based on auth mode
-        const { owner, authModeParams } = await getOwnerByAuthMode(authMode);
+        // Get parameters based on auth mode
+        const { authModeParams } = await getOwnerByAuthMode(authMode);
 
         const dataWithoutOwner = Utils.removeOwnerField(data as any, "create");
         const cleanedData: Record<string, any> = {};
@@ -474,8 +435,11 @@ export function createAmplifyService<T extends BaseModel>(
                 return [...oldItems, newItem];
               });
             }
-          } else if (queryKey.length === 1) {
-            // Regular list query (e.g. ["User"]). Avoid internal keys like ["User","currentId"].
+          } else if (queryKey.length < 3 && queryKey[1] !== "currentId") {
+            // Regular list query (old-AmplifyQuery behavior: update all short list keys)
+            // - [Model]
+            // - [Model, ...] (length 2)
+            // But avoid internal singleton keys like ["User","currentId"].
             const data = queryClient.getQueryData(queryKey);
             if (data) {
               previousDataMap.set(queryKey, data);
@@ -494,25 +458,9 @@ export function createAmplifyService<T extends BaseModel>(
             `🍬 ${modelName} creation attempt [Auth: ${authMode}]:`,
             newItem.id
           );
-        // Many schemas use an owner field for auth. Prefer adding owner when available,
-        // but retry without it if the model doesn't define it.
-        const createPayload: any = owner ? { ...(newItem as any), owner } : newItem;
-        let createdItem: any = null;
-        try {
-          ({ data: createdItem } = await (getClient().models as any)[modelName].create(
-            createPayload,
-            authModeParams
-          ));
-        } catch (e) {
-          if (owner && isOwnerNotInSchemaError(e)) {
-            ({ data: createdItem } = await (getClient().models as any)[modelName].create(
-              newItem,
-              authModeParams
-            ));
-          } else {
-            throw e;
-          }
-        }
+          const { data: createdItem } = await (getClient().models as any)[
+            modelName
+          ].create(newItem, authModeParams);
 
           if (createdItem) {
             // Update cache on API success
@@ -576,8 +524,8 @@ export function createAmplifyService<T extends BaseModel>(
         // Determine auth mode (use provided option if available)
         const authMode = options?.authMode || currentAuthMode;
 
-        // Get owner and parameters based on auth mode
-        const { owner, authModeParams } = await getOwnerByAuthMode(authMode);
+        // Get parameters based on auth mode
+        const { authModeParams } = await getOwnerByAuthMode(authMode);
 
         const preparedItems: T[] = dataList
           .map((data) => {
@@ -650,8 +598,9 @@ export function createAmplifyService<T extends BaseModel>(
 
               return oldItems; // No change if no items match relation ID
             });
-          } else if (queryKey.length === 1) {
-            // Regular list query - add all items (e.g. ["User"]). Avoid internal keys like ["User","currentId"].
+          } else if (queryKey.length < 3 && queryKey[1] !== "currentId") {
+            // Regular list query - add all items (old-AmplifyQuery behavior)
+            // Avoid internal singleton keys like ["User","currentId"].
             queryClient.setQueryData(queryKey, (oldData: any) => {
               const oldItems = Array.isArray(oldData) ? oldData : [];
               return [...oldItems, ...preparedItems];
@@ -672,24 +621,9 @@ export function createAmplifyService<T extends BaseModel>(
           // Parallel API calls - apply auth mode
           const createPromises = preparedItems.map(async (newItem) => {
             try {
-              const createPayload: any = owner
-                ? { ...(newItem as any), owner }
-                : newItem;
-
-              let createdItem: any = null;
-              try {
-                ({ data: createdItem } = await (getClient().models as any)[
-                  modelName
-                ].create(createPayload, authModeParams));
-              } catch (e) {
-                if (owner && isOwnerNotInSchemaError(e)) {
-                  ({ data: createdItem } = await (getClient().models as any)[
-                    modelName
-                  ].create(newItem, authModeParams));
-                } else {
-                  throw e;
-                }
-              }
+              const { data: createdItem } = await (getClient().models as any)[
+                modelName
+              ].create(newItem, authModeParams);
 
               // Update individual item cache on API success
               if (createdItem) {
@@ -884,8 +818,7 @@ export function createAmplifyService<T extends BaseModel>(
         const authMode = options?.authMode || currentAuthMode;
 
         // Get owner and parameters based on auth mode
-        const { owner, ownerCandidates, authModeParams } =
-          await getOwnerByAuthMode(authMode);
+        const { owner, authModeParams } = await getOwnerByAuthMode(authMode);
 
         // Get owner-based query name from global config
         const ownerQueryName = getOwnerQueryName(modelName);
@@ -900,7 +833,6 @@ export function createAmplifyService<T extends BaseModel>(
           );
 
           if (isDebugEnabled()) {
-            // Debug: Check if model and query exist
             const client = getClient();
             debugLog(`🍬 Debug - client.models exists:`, !!client.models);
             debugLog(
@@ -917,74 +849,10 @@ export function createAmplifyService<T extends BaseModel>(
             );
           }
 
-          const client = getClient();
-          const model = (client.models as any)?.[modelName];
-
-        // Execute owner query (try multiple owner candidates)
-          const ownersToTry =
-            Array.isArray(ownerCandidates) && ownerCandidates.length > 0
-              ? ownerCandidates
-              : owner
-                ? [owner]
-                : [];
-
-          if (!model?.[ownerQueryName] || ownersToTry.length === 0) {
-            throw new Error(
-              `owner query not available or owner missing: ${modelName}.${ownerQueryName}`
-            );
-          }
-
-          let result: any = null;
-          let usedOwner: string | null = null;
-          for (const candidateOwner of ownersToTry) {
-            debugLog(
-              `🍬 ${modelName} list owner-query attempt`,
-              `[${ownerQueryName}]`,
-              { owner: candidateOwner, authMode }
-            );
-            // Generated secondary index query typically expects { owner } only.
-            const { data } = await model[ownerQueryName](
-              { owner: candidateOwner },
-              authModeParams
-            );
-            const items = (data?.items || data?.data || data || []).filter(
-              (item: any) => item !== null
-            );
-            if (items.length > 0) {
-              result = data;
-              usedOwner = candidateOwner;
-              break;
-            }
-            // If empty, try next candidate (legacy owner format)
-          }
-
-          // If owner-query returns empty for all candidates, fall back to default list().
-          // This prevents "data disappears on refetch" when the project stores owner using
-          // a different identity claim than expected (e.g., username vs sub) OR when the
-          // owner secondary index exists but doesn't match stored owner values.
-          if (!result) {
-            debugWarn(
-              `🍬 ${modelName} list: owner-query returned 0 items for all candidates, falling back to model.list()`,
-              { ownersToTry, authMode }
-            );
-            const { data: fallback } = await model.list({}, authModeParams);
-            const fallbackItems = (
-              fallback?.items ||
-              fallback?.data ||
-              fallback ||
-              []
-            ).filter((item: any) => item !== null);
-            // Use the same shape below by setting `result` to array-ish
-            result = fallbackItems;
-            usedOwner = null;
-          }
-
-          if (usedOwner && usedOwner !== ownersToTry[0]) {
-            debugWarn(
-              `🍬 ${modelName} list: owner-query returned results only for legacy owner format`,
-              { tried: ownersToTry, usedOwner }
-            );
-          }
+          // Execute owner query (old-AmplifyQuery behavior)
+          const { data: result } = await (getClient().models as any)[modelName][
+            ownerQueryName
+          ]({ owner, authMode }, authModeParams);
 
           // Extract result data + filter null values
           const items = (result?.items || result?.data || result || []).filter(
@@ -1044,9 +912,7 @@ export function createAmplifyService<T extends BaseModel>(
           if (
             (error as any)?.message?.includes("not found") ||
             (error as any)?.message?.includes("is not a function") ||
-            (error as any)?.message?.includes("is undefined") ||
-            (error as any)?.message?.includes("owner query not available") ||
-            (error as any)?.message?.includes("owner missing")
+            (error as any)?.message?.includes("is undefined")
           ) {
             console.warn(
               `🍬 ${ownerQueryName} query not found. Trying default list query...`
@@ -1592,16 +1458,17 @@ export function createAmplifyService<T extends BaseModel>(
         const authMode = options?.authMode || currentAuthMode;
 
         // Get owner and parameters based on auth mode
-        const { owner, ownerCandidates, authModeParams } =
-          await getOwnerByAuthMode(authMode);
+        const { owner, authModeParams } = await getOwnerByAuthMode(authMode);
 
-        // Add owner value to queries requiring owner field when userPool auth.
-        // IMPORTANT: many projects store owner as `cognito:username`, not `sub`.
-        // If this is an owner-based index query, try multiple owner candidates to
-        // avoid returning empty results and accidentally clearing UI state on refetch.
-        const isOwnerQuery =
-          authMode === "userPool" && queryName.toLowerCase().includes("owner");
+        // Add owner value to queries requiring owner field when userPool auth
         const enhancedArgs = { ...args };
+        if (
+          owner &&
+          authMode === "userPool" &&
+          queryName.toLowerCase().includes("owner")
+        ) {
+          enhancedArgs.owner = owner;
+        }
 
         // Detect relational query (if fields like dailyId, userId exist)
         const relationField = Object.keys(enhancedArgs).find((key) =>
@@ -1649,48 +1516,10 @@ export function createAmplifyService<T extends BaseModel>(
           throw new Error(`🍬 Query ${queryName} does not exist.`);
         }
 
-        const model = (getClient().models as any)[modelName];
-
-        // Execute index query - apply auth mode (with owner-candidate fallback)
-        let result: any = null;
-        if (isOwnerQuery) {
-          const candidates = [
-            // If caller explicitly passed owner, try that first
-            typeof args?.owner === "string" ? args.owner : "",
-            ...(Array.isArray(ownerCandidates) ? ownerCandidates : []),
-            typeof owner === "string" ? owner : "",
-          ].filter((v): v is string => typeof v === "string" && v.length > 0);
-          const ownersToTry = Array.from(new Set(candidates));
-
-          if (ownersToTry.length === 0) {
-            throw new Error(`🍬 owner is missing for ${modelName}.${queryName}`);
-          }
-
-          for (const candidateOwner of ownersToTry) {
-            const nextArgs = { ...enhancedArgs, owner: candidateOwner };
-            const { data } = await model[queryName](nextArgs, authModeParams);
-            const items = (data?.items || data?.data || data || []).filter(
-              (item: any) => item !== null
-            );
-            if (items.length > 0) {
-              result = data;
-              if (candidateOwner !== ownersToTry[0]) {
-                debugWarn(
-                  `🍬 ${modelName} ${queryName}: returned results only for non-primary owner candidate`,
-                  { tried: ownersToTry, usedOwner: candidateOwner }
-                );
-              }
-              break;
-            }
-          }
-
-          // If still empty, return empty list (do not throw unless requested)
-          if (!result) {
-            result = [];
-          }
-        } else {
-          ({ data: result } = await model[queryName](enhancedArgs, authModeParams));
-        }
+        // Execute index query - apply auth mode
+        const { data: result } = await (getClient().models as any)[modelName][
+          queryName
+        ](enhancedArgs, authModeParams);
 
         // Extract result data
         const items = result?.items || result?.data || result || [];
@@ -2207,73 +2036,12 @@ export function createAmplifyService<T extends BaseModel>(
       const refresh = useCallback(
         async (refreshOptions?: { filter?: Record<string, any> }) => {
           debugLog(`🍬 ${modelName} useHook refresh called`, queryKey);
-          
-          // IMPORTANT: refresh must always fetch from server (no cache).
-          // We do this by calling service.list/customList with forceRefresh: true.
-          const currentData = hookQueryClient.getQueryData<T[]>(queryKey);
-          debugLog(
-            `🍬 ${modelName} useHook refresh - current data before server refresh:`,
-            currentData?.length || 0,
-            "items"
-          );
-
-          try {
-            // If filter is provided and different from current filter, we'd need a new query key.
-            // For now, we ignore refreshOptions.filter and refresh the current hook query only.
-            if (refreshOptions?.filter) {
-              console.warn(
-                `🍬 ${modelName} useHook refresh: refreshOptions.filter is currently ignored (queryKey is fixed per hook instance).`
-              );
-            }
-
-            let newData: T[] = [];
-
-            if (options?.customList) {
-              newData = await service.customList(
-                options.customList.queryName,
-                options.customList.args,
-                { forceRefresh: true, throwOnError: true }
-              );
-            } else if (options?.initialFetchOptions?.filter) {
-              newData = await service.list({
-                filter: options.initialFetchOptions.filter,
-                forceRefresh: true,
-                throwOnError: true,
-              });
-            } else {
-              newData = await service.list({
-                forceRefresh: true,
-                throwOnError: true,
-              });
-            }
-
-            debugLog(
-              `🍬 ${modelName} useHook refresh - server refresh result:`,
-              newData?.length || 0,
-              "items"
-            );
-
-            // Keep hook cache in sync with hook's queryKey.
-            hookQueryClient.setQueryData(queryKey, newData);
-            return newData || [];
-          } catch (e) {
-            console.error(`🍬 ${modelName} useHook refresh error:`, e);
-            // On error, restore previous data if available (prevents list flashing empty)
-            if (currentData && currentData.length > 0) {
-              hookQueryClient.setQueryData(queryKey, currentData);
-              return currentData;
-            }
-            return [];
-          }
+          // Keep behavior consistent with old-AmplifyQuery:
+          // refresh == refetch() (same queryFn as initial load)
+          const { data } = await refetch({ throwOnError: true });
+          return data || [];
         },
-        [
-          modelName,
-          queryKey,
-          hookQueryClient,
-          service,
-          options?.customList,
-          options?.initialFetchOptions?.filter,
-        ]
+        [refetch, queryKey, modelName]
       );
 
       const customListFn = useCallback(
