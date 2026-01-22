@@ -121,8 +121,7 @@ export function resetConfig(): void {
 /**
  * Enable/disable singleton auto-create behavior for singleton hooks.
  *
- * - **New**: `useSigletoneHook()` (recommended)
- * - **Legacy**: `useCurrentHook()` (deprecated alias)
+ * - **New**: `useSingletonHook()` (recommended)
  */
 export function setSingletonAutoCreate(config: {
   enabled?: boolean;

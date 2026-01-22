@@ -166,10 +166,7 @@ const {
   isLoading: isSettingsLoading,
   update: upsertSettings, // creates if missing
   refresh: refreshSettings,
-} = UserSettingsService.useSigletoneHook();
-
-// Legacy alias (deprecated)
-// UserSettingsService.useCurrentHook()
+} = UserSettingsService.useSingletonHook();
 ```
 
 ### 4. Data Fetching and Saving

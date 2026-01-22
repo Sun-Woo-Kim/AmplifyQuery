@@ -166,25 +166,12 @@ export interface SingletonAmplifyService<T> extends AmplifyDataService<T> {
   upsertCurrent: (data: Partial<T>) => Promise<T | null>;
 
   // Hook for managing current singleton item
-  useSigletoneHook: (
+  useSingletonHook: (
     options?: {
       /**
        * When true (default), if the singleton item does not exist it will be created.
        * You can set false to disable auto-create for this hook call.
        */
-      autoCreate?: boolean;
-      realtime?: {
-        enabled?: boolean;
-        observeOptions?: Record<string, any>;
-      };
-    }
-  ) => ItemHook<T>;
-
-  /**
-   * @deprecated Use useSigletoneHook() instead.
-   */
-  useCurrentHook: (
-    options?: {
       autoCreate?: boolean;
       realtime?: {
         enabled?: boolean;

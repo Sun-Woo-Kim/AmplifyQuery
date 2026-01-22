@@ -113,7 +113,7 @@ export function createSingletonService<T>(
     },
 
     // React hook to manage the current singleton item
-    useSigletoneHook: (
+    useSingletonHook: (
       options?: {
         autoCreate?: boolean;
         realtime?: {
@@ -142,7 +142,7 @@ export function createSingletonService<T>(
       });
 
       const idForItemHook = currentId ?? "";
-      debugLog(`🍬 ${modelName} useSigletoneHook currentId`, {
+      debugLog(`🍬 ${modelName} useSingletonHook currentId`, {
         currentId,
         idForItemHook,
       });
@@ -166,7 +166,7 @@ export function createSingletonService<T>(
       const error = (idError as Error | null) || core.error || null;
 
       useEffect(() => {
-        debugLog(`🍬 ${modelName} useSigletoneHook effect check`, {
+        debugLog(`🍬 ${modelName} useSingletonHook effect check`, {
           currentId,
           isLoading,
           autoCreateEnabled,
@@ -185,17 +185,17 @@ export function createSingletonService<T>(
         // Best-effort: create { id } if missing.
         void (async () => {
           try {
-            debugWarn(`🍬 ${modelName} useSigletoneHook auto-create starting`, {
+            debugWarn(`🍬 ${modelName} useSingletonHook auto-create starting`, {
               currentId,
             });
             await singletonService.upsertCurrent({} as any);
             await singletonService.getCurrent({ forceRefresh: true });
-            debugLog(`🍬 ${modelName} useSigletoneHook auto-create done`, {
+            debugLog(`🍬 ${modelName} useSingletonHook auto-create done`, {
               currentId,
             });
           } catch (e) {
             attemptedAutoCreateForIdRef.current = null; // allow retry later
-            debugWarn(`🍬 ${modelName} useSigletoneHook auto-create failed:`, e);
+            debugWarn(`🍬 ${modelName} useSingletonHook auto-create failed:`, e);
           }
         })();
       }, [currentId, isLoading, item, modelName, autoCreateEnabled, error]);
@@ -228,9 +228,6 @@ export function createSingletonService<T>(
 
       return { item, isLoading, error, refresh, update, delete: remove };
     },
-
-    // Backward-compatible alias
-    useCurrentHook: (options) => singletonService.useSigletoneHook(options),
   };
 
   return singletonService;
