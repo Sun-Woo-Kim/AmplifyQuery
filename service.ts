@@ -87,29 +87,45 @@ async function getOwnerByAuthMode(authMode: AuthMode): Promise<{
     try {
       const { username, userId } = await getCurrentUser();
       // IMPORTANT:
-      // Amplify "owner" authorization commonly uses `cognito:username` by default,
-      // but some projects store `sub` (userId) instead. To avoid "refetch clears list"
-      // issues when using list-by-owner secondary indexes, we try multiple candidates.
+      // In this workspace we standardize on the default Amplify owner claim:
+      // `cognito:username` (i.e. `username` from getCurrentUser()).
       //
-      // Candidates priority (unique, non-empty):
-      // - userId (sub)
-      // - username (cognito:username)
-      // - legacy `${userId}::${username}` (older patterns)
-      const canonicalSub = typeof userId === "string" ? userId : "";
+      // This prevents a common bug where some records are written with `sub` (userId)
+      // while the owner secondary index is queried with `username`, or vice versa,
+      // causing refetch to "lose" most items and overwrite cache with a partial list.
       const canonicalUsername = typeof username === "string" ? username : "";
+      const canonicalSub = typeof userId === "string" ? userId : "";
       const legacyOwner =
         canonicalSub && canonicalUsername && canonicalUsername !== canonicalSub
           ? `${canonicalSub}::${canonicalUsername}`
           : "";
 
-      // Keep `owner` for compatibility (used in some create/update paths), prefer sub.
-      owner = canonicalSub || canonicalUsername;
+      // Preferred owner value for create/update payloads.
+      owner = canonicalUsername || canonicalSub;
 
-      const candidates = [canonicalSub, canonicalUsername, legacyOwner].filter(
-        (v): v is string => typeof v === "string" && v.length > 0
+      // Preferred owner candidates for list-by-owner queries.
+      // If username is available, ONLY use username-based owner to keep list results consistent.
+      // If username is missing for some reason, fall back to sub to avoid total failure.
+      const candidates = canonicalUsername
+        ? [canonicalUsername, legacyOwner]
+        : [canonicalSub];
+
+      ownerCandidates = Array.from(
+        new Set(
+          candidates.filter(
+            (v): v is string => typeof v === "string" && v.length > 0
+          )
+        )
       );
-      // De-dupe while preserving order
-      ownerCandidates = Array.from(new Set(candidates));
+
+      // Debug: surface the actual Cognito identifiers in dev logs
+      debugLog(`🍬 Auth identity resolved`, {
+        authMode,
+        username,
+        userId,
+        owner,
+        ownerCandidates,
+      });
     } catch (error) {
       console.error("Error getting user authentication info:", error);
       // Continue even if error occurs (API call will fail)
