@@ -1,3 +1,10 @@
+## [2.0.3](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.2...v2.0.3) (2026-01-22)
+
+
+### fix
+
+* fetch ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/a05bb1432cbf97fd7cea0dc64968b769175b8be9))
+
 ## [2.0.2](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.1...v2.0.2) (2026-01-22)
 
 
