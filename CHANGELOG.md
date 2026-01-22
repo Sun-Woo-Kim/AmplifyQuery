@@ -1,3 +1,10 @@
+## [1.0.21](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.20...v1.0.21) (2026-01-22)
+
+
+### fix
+
+* useSingletone 구현 ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/d1fd77667a95ee65e416387cb161be0d80ca684c))
+
 ## [1.0.20](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v1.0.19...v1.0.20) (2026-01-21)
 
 
