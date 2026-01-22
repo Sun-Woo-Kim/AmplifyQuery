@@ -44,7 +44,48 @@ function signatureForModelItem(item: any): string {
   const id = typeof item?.id === "string" ? item.id : "";
   const updatedAt = typeof item?.updatedAt === "string" ? item.updatedAt : "";
   const createdAt = typeof item?.createdAt === "string" ? item.createdAt : "";
-  return `${id}::${updatedAt || createdAt}`;
+  // Some list/customList queries may not include `updatedAt` depending on the selection set.
+  // If we only compare by (id, updatedAt|createdAt), we can incorrectly treat real updates
+  // (e.g. status changes) as "no-op" and skip cache updates.
+  //
+  // Use a cheap "version-ish" marker when available, otherwise include a shallow signature.
+  const versionMarker =
+    typeof item?._lastChangedAt === "number"
+      ? String(item._lastChangedAt)
+      : typeof item?._version === "number"
+        ? String(item._version)
+        : typeof item?.version === "number"
+          ? String(item.version)
+          : "";
+
+  const shallowSig = (() => {
+    if (!item || typeof item !== "object") return "";
+    const keys = Object.keys(item).sort();
+    const parts: string[] = [];
+    for (const key of keys) {
+      if (key === "__typename") continue;
+      const v = (item as any)[key];
+      if (v === null || v === undefined) {
+        parts.push(`${key}=null`);
+        continue;
+      }
+      const t = typeof v;
+      if (t === "string" || t === "number" || t === "boolean") {
+        parts.push(`${key}=${String(v)}`);
+        continue;
+      }
+      if (Array.isArray(v)) {
+        parts.push(`${key}=[${v.length}]`);
+        continue;
+      }
+      // Object (nested) - avoid deep/large stringify, just mark presence
+      parts.push(`${key}={}`);
+    }
+    // Keep it bounded to avoid huge signatures
+    return parts.join("|").slice(0, 500);
+  })();
+
+  return `${id}::${updatedAt || ""}::${createdAt || ""}::${versionMarker}::${shallowSig}`;
 }
 
 function areItemArraysEquivalentById(a: any[], b: any[]): boolean {
