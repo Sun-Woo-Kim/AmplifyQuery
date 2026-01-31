@@ -1,3 +1,10 @@
+## [2.0.7](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.6...v2.0.7) (2026-01-31)
+
+
+### fix
+
+* feat: add attachQueryClient for unified cache and fix silent Amplify errors ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/4e6da8d77750f95d7a439f40bc1db4dae4ef6c20))
+
 ## [2.0.6](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.5...v2.0.6) (2026-01-22)
 
 
