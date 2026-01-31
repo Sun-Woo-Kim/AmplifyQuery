@@ -1,3 +1,10 @@
+## [2.0.8](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.7...v2.0.8) (2026-01-31)
+
+
+### fix
+
+* fix: respect query invalidation state in customQueries cache ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/faeeb4fda7f6c7b972246eac811aa64ab66d535c))
+
 ## [2.0.7](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.6...v2.0.7) (2026-01-31)
 
 
