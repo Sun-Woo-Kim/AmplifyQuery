@@ -6,7 +6,7 @@ import {
   debugWarn,
   isDebugEnabled,
 } from "./config";
-import { queryClient } from "./query";
+import { queryClient, attachQueryClient } from "./query";
 import {
   AmplifyDataService,
   AuthMode,
@@ -499,9 +499,15 @@ export function createAmplifyService<T extends BaseModel>(
             `🍬 ${modelName} creation attempt [Auth: ${authMode}]:`,
             newItem.id
           );
-          const { data: createdItem } = await (getClient().models as any)[
-            modelName
-          ].create(newItem, authModeParams);
+
+          // Some Amplify clients return `{ data, errors }` without throwing on errors.
+          // If `data` is null/undefined, treat it as a failure and rollback.
+          const res = await (getClient().models as any)[modelName].create(
+            newItem,
+            authModeParams
+          );
+          const createdItem = (res as any)?.data;
+          const errors = (res as any)?.errors;
 
           if (createdItem) {
             // Update cache on API success
@@ -531,11 +537,15 @@ export function createAmplifyService<T extends BaseModel>(
             return createdItem;
           }
 
-          // Keep optimistic update data even if no API response
-          console.warn(
-            `🍬 ${modelName} creation API no response. Keeping optimistic update data.`
+          // No data returned -> treat as error (don't silently keep optimistic item)
+          console.error(
+            `🍬 ${modelName} creation failed: empty response`,
+            errors ? { errors } : undefined
           );
-          return newItem;
+          rollbackCache(queryClient, previousDataMap);
+          throw new Error(
+            `🍬 ${modelName} create returned no data${errors ? " (has errors)" : ""}`
+          );
         } catch (apiError) {
           // Rollback and log error on API failure
           console.error(
@@ -662,9 +672,12 @@ export function createAmplifyService<T extends BaseModel>(
           // Parallel API calls - apply auth mode
           const createPromises = preparedItems.map(async (newItem) => {
             try {
-              const { data: createdItem } = await (getClient().models as any)[
-                modelName
-              ].create(newItem, authModeParams);
+              const res = await (getClient().models as any)[modelName].create(
+                newItem,
+                authModeParams
+              );
+              const createdItem = (res as any)?.data;
+              const errors = (res as any)?.errors;
 
               // Update individual item cache on API success
               if (createdItem) {
@@ -683,13 +696,27 @@ export function createAmplifyService<T extends BaseModel>(
                   );
                 }
               }
-              return createdItem || newItem;
+              if (!createdItem) {
+                // Treat empty data as failure (Amplify can return { data: null, errors } without throwing)
+                if (errors?.length) {
+                  console.error(
+                    `🍬 ${modelName} createList: create returned no data (has errors)`,
+                    { errors }
+                  );
+                } else {
+                  console.error(
+                    `🍬 ${modelName} createList: create returned no data`
+                  );
+                }
+                return null;
+              }
+              return createdItem;
             } catch (error) {
               console.error(
                 `🍬 ${modelName} batch creation failed for ID ${newItem.id}:`,
                 error
               );
-              return newItem;
+              return null;
             }
           });
 
@@ -767,9 +794,17 @@ export function createAmplifyService<T extends BaseModel>(
         const { authModeParams } = await getOwnerByAuthMode(authMode);
 
         // API call - apply auth mode
-        const { data: apiResponse } = await (getClient().models as any)[
-          modelName
-        ].get({ id }, authModeParams);
+        const res = await (getClient().models as any)[modelName].get(
+          { id },
+          authModeParams
+        );
+        const apiResponse = (res as any)?.data;
+        const errors = (res as any)?.errors;
+        if (!apiResponse && errors?.length) {
+          throw new Error(
+            `🍬 ${modelName} get returned no data (has errors)`
+          );
+        }
 
         // Handle case where API returns array instead of single item
         let item = apiResponse;
@@ -891,9 +926,16 @@ export function createAmplifyService<T extends BaseModel>(
           }
 
           // Execute owner query (old-AmplifyQuery behavior)
-          const { data: result } = await (getClient().models as any)[modelName][
+          const res = await (getClient().models as any)[modelName][
             ownerQueryName
           ]({ owner, authMode }, authModeParams);
+          const result = (res as any)?.data;
+          const errors = (res as any)?.errors;
+          if (!result && errors?.length) {
+            throw new Error(
+              `🍬 ${modelName} ${ownerQueryName} returned no data (has errors)`
+            );
+          }
 
           // Extract result data + filter null values
           const items = (result?.items || result?.data || result || []).filter(
@@ -959,9 +1001,17 @@ export function createAmplifyService<T extends BaseModel>(
               `🍬 ${ownerQueryName} query not found. Trying default list query...`
             );
             // Try default list query if owner query not found
-            const { data: result } = await (getClient().models as any)[
-              modelName
-            ].list({}, authModeParams);
+            const res = await (getClient().models as any)[modelName].list(
+              {},
+              authModeParams
+            );
+            const result = (res as any)?.data;
+            const errors = (res as any)?.errors;
+            if (!result && errors?.length) {
+              throw new Error(
+                `🍬 ${modelName} list fallback returned no data (has errors)`
+              );
+            }
 
             // Extract and process result data
             const items = (
@@ -1085,9 +1135,12 @@ export function createAmplifyService<T extends BaseModel>(
             `🍬 ${modelName} update attempt [Auth: ${authMode}]:`,
             itemId
           );
-        const { data: updatedItem } = await (getClient().models as any)[
-          modelName
-        ].update(cleanedData, authModeParams);
+          const res = await (getClient().models as any)[modelName].update(
+            cleanedData,
+            authModeParams
+          );
+          const updatedItem = (res as any)?.data;
+          const errors = (res as any)?.errors;
 
           if (updatedItem) {
             // Update cache on API success
@@ -1107,16 +1160,16 @@ export function createAmplifyService<T extends BaseModel>(
 
             debugLog(`🍬 ${modelName} update success:`, itemId);
             return updatedItem;
-          } else {
-            console.warn(
-              `🍬 ${modelName} update API response missing. Maintaining optimistic update data.`
-            );
-            // If no API response, return the data saved during optimistic update
-            const singleItemQueryKey: QueryKey = itemKey(modelName, itemId);
-            return (
-              (previousDataMap.get(singleItemQueryKey) as T | undefined) || null
-            );
           }
+          // No data returned -> treat as error and rollback
+          console.error(
+            `🍬 ${modelName} update failed: empty response`,
+            errors ? { errors } : undefined
+          );
+          rollbackCache(queryClient, previousDataMap);
+          throw new Error(
+            `🍬 ${modelName} update returned no data${errors ? " (has errors)" : ""}`
+          );
         } catch (apiError) {
           // Rollback and log error on API failure
           console.error(
@@ -1180,10 +1233,17 @@ export function createAmplifyService<T extends BaseModel>(
             `🍬 ${modelName} delete attempt [Auth: ${authMode}]:`,
             id
           );
-          await (getClient().models as any)[modelName].delete(
+          const res = await (getClient().models as any)[modelName].delete(
             { id },
             authModeParams
           );
+          const errors = (res as any)?.errors;
+          // Delete can return no data on success; only treat explicit errors as failure.
+          if (errors?.length) {
+            throw new Error(
+              `🍬 ${modelName} delete returned errors without throwing`
+            );
+          }
           debugLog(`🍬 ${modelName} delete success:`, id);
 
           // On API success, invalidate all related queries to automatically refresh
@@ -1278,10 +1338,16 @@ export function createAmplifyService<T extends BaseModel>(
           // Parallel API calls - apply auth mode
           const deletePromises = ids.map(async (id) => {
             try {
-              await (getClient().models as any)[modelName].delete(
+              const res = await (getClient().models as any)[modelName].delete(
                 { id },
                 authModeParams
               );
+              const errors = (res as any)?.errors;
+              if (errors?.length) {
+                throw new Error(
+                  `🍬 ${modelName} delete returned errors without throwing`
+                );
+              }
               results.success.push(id);
               return { id, success: true };
             } catch (error) {
@@ -1420,9 +1486,12 @@ export function createAmplifyService<T extends BaseModel>(
               `🍬 ${modelName} upsert(update) attempt [Auth: ${authMode}]:`,
               data.id
             );
-        const { data: updatedItem } = await (getClient().models as any)[
-          modelName
-        ].update(cleanedData, authModeParams);
+            const res = await (getClient().models as any)[modelName].update(
+              cleanedData,
+              authModeParams
+            );
+            const updatedItem = (res as any)?.data;
+            const errors = (res as any)?.errors;
             if (updatedItem) {
               handleCacheUpdateOnSuccess(
                 queryClient,
@@ -1433,25 +1502,28 @@ export function createAmplifyService<T extends BaseModel>(
               );
               debugLog(`🍬 ${modelName} upsert(update) success:`, data.id);
               return updatedItem;
-            } else {
-              console.warn(
-                `🍬 ${modelName} upsert(update) no API response. Keeping optimistic update data.`
-              );
-              const singleItemQueryKey: QueryKey = itemKey(modelName, data.id);
-              return (
-                (previousDataMap.get(singleItemQueryKey) as T | undefined) ||
-                null
-              );
             }
+            // No data -> treat as error and rollback
+            console.error(
+              `🍬 ${modelName} upsert(update) failed: empty response`,
+              errors ? { errors } : undefined
+            );
+            rollbackCache(queryClient, previousDataMap);
+            throw new Error(
+              `🍬 ${modelName} upsert(update) returned no data${errors ? " (has errors)" : ""}`
+            );
           } else {
             // Use create logic if item doesn't exist - apply auth mode
             debugLog(
               `🍬 ${modelName} upsert(create) attempt [Auth: ${authMode}]:`,
               data.id
             );
-        const { data: createdItem } = await (getClient().models as any)[
-          modelName
-        ].create(cleanedData, authModeParams);
+            const res = await (getClient().models as any)[modelName].create(
+              cleanedData,
+              authModeParams
+            );
+            const createdItem = (res as any)?.data;
+            const errors = (res as any)?.errors;
             if (createdItem) {
               handleCacheUpdateOnSuccess(
                 queryClient,
@@ -1462,16 +1534,16 @@ export function createAmplifyService<T extends BaseModel>(
               );
               debugLog(`🍬 ${modelName} upsert(create) success:`, data.id);
               return createdItem;
-            } else {
-              console.warn(
-                `🍬 ${modelName} upsert(create) no API response. Keeping optimistic update data.`
-              );
-              const singleItemQueryKey: QueryKey = itemKey(modelName, data.id);
-              return (
-                (previousDataMap.get(singleItemQueryKey) as T | undefined) ||
-                null
-              );
             }
+            // No data -> treat as error and rollback
+            console.error(
+              `🍬 ${modelName} upsert(create) failed: empty response`,
+              errors ? { errors } : undefined
+            );
+            rollbackCache(queryClient, previousDataMap);
+            throw new Error(
+              `🍬 ${modelName} upsert(create) returned no data${errors ? " (has errors)" : ""}`
+            );
           }
         } catch (apiError) {
           // Rollback and log error on API error
@@ -1558,9 +1630,17 @@ export function createAmplifyService<T extends BaseModel>(
         }
 
         // Execute index query - apply auth mode
-        const { data: result } = await (getClient().models as any)[modelName][
-          queryName
-        ](enhancedArgs, authModeParams);
+        const res = await (getClient().models as any)[modelName][queryName](
+          enhancedArgs,
+          authModeParams
+        );
+        const result = (res as any)?.data;
+        const errors = (res as any)?.errors;
+        if (!result && errors?.length) {
+          throw new Error(
+            `🍬 ${modelName} ${queryName} returned no data (has errors)`
+          );
+        }
 
         // Extract result data
         const items = result?.items || result?.data || result || [];
@@ -1663,6 +1743,11 @@ export function createAmplifyService<T extends BaseModel>(
       };
     }): ModelHook<T> => {
       const hookQueryClient = useQueryClient();
+      // Ensure direct service calls (create/update/delete) use the same QueryClient
+      // as hooks, so caches stay consistent.
+      useEffect(() => {
+        attachQueryClient(hookQueryClient);
+      }, [hookQueryClient]);
 
       // Determine query key
       const queryKey: QueryKey = useMemo(() => {
@@ -1906,6 +1991,10 @@ export function createAmplifyService<T extends BaseModel>(
 
         let isMounted = true;
         let lastSynced: boolean | undefined = undefined;
+        // observeQuery can temporarily emit an empty list during initial sync/reconnect.
+        // If we immediately overwrite a non-empty cache with [], list UIs "flicker" (items disappear then reappear).
+        // Keep the last known non-empty list until isSynced is true.
+        const lastNonEmptyItemsRef = { current: [] as T[] };
         const subscription = model.observeQuery(observeOptions).subscribe({
           next: ({ items: nextItems, isSynced: synced }: any) => {
             if (!isMounted) return;
@@ -1920,6 +2009,16 @@ export function createAmplifyService<T extends BaseModel>(
             if (lastSynced !== nextSynced) {
               lastSynced = nextSynced;
               setIsSynced(nextSynced);
+            }
+
+            if (safeItems.length > 0) {
+              lastNonEmptyItemsRef.current = safeItems as T[];
+            }
+
+            // ✅ Guard: if we're not synced yet and observeQuery emits an empty list,
+            // do NOT clobber a previously non-empty cache.
+            if (!nextSynced && safeItems.length === 0 && previousItems.length > 0) {
+              return;
             }
 
             // Avoid cache thrash: observeQuery can emit repeatedly even when data didn't change.
@@ -2127,6 +2226,11 @@ export function createAmplifyService<T extends BaseModel>(
       }
     ): ItemHook<T> => {
       const hookQueryClient = useQueryClient();
+      // Ensure direct service calls (create/update/delete) use the same QueryClient
+      // as hooks, so caches stay consistent.
+      useEffect(() => {
+        attachQueryClient(hookQueryClient);
+      }, [hookQueryClient]);
       // Runtime safety: avoid non-string ids creating broken query keys like
       // ["User","item",[...]] which can cause cache thrash/flicker.
       const safeId = typeof id === "string" ? id : "";

@@ -3,6 +3,8 @@ import {
   configure as configureQuery,
   queryClient,
   getQueryClient,
+  attachQueryClient,
+  detachQueryClient,
   createQueryKeys,
   invalidateModel,
   invalidateModelItem,
@@ -97,6 +99,8 @@ export * from "./types";
 export {
   queryClient,
   getQueryClient,
+  attachQueryClient,
+  detachQueryClient,
   invalidateModel,
   invalidateModelItem,
   invalidateModelByField,

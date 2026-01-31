@@ -119,10 +119,47 @@ function createMmkvPersister() {
   };
 }
 
+function setupPersistenceFor(client: QueryClient) {
+  if (!config.isCachingEnabled) {
+    debugLog("🏃‍♀️ React Query offline cache is disabled via flag.");
+    return;
+  }
+
+  debugLog("🏃‍♀️ React Query offline cache is enabled with MMKV.");
+
+  // Create new persister if config changed
+  const mmkvPersister = createMmkvPersister();
+
+  try {
+    // Lazy-load persistQueryClient to avoid hard dependency resolution at build time.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { persistQueryClient } = require("@tanstack/react-query-persist-client");
+
+    persistQueryClient({
+      queryClient: client,
+      persister: mmkvPersister as any,
+      // Additional options
+      maxAge: config.storage?.maxAge || 1000 * 60 * 60 * 24 * 7, // Default 7 days
+      dehydrateOptions: {
+        shouldDehydrateQuery: (query: any) => {
+          // Only persist successful queries to reduce hydration cancellation noise
+          if (query.state?.status !== "success") return false;
+          // Avoid persisting mutation-like or transient keys if needed later
+          return true;
+        },
+      },
+    });
+  } catch (e) {
+    console.error("Error setting up React Query persistence:", e);
+  }
+}
+
 /**
  * TanStack Query client
  */
 export let queryClient = new QueryClient(config.queryClientConfig);
+let internalQueryClient: QueryClient = queryClient;
+let isExternalClientAttached = false;
 
 /**
  * Get the current query client instance
@@ -130,6 +167,36 @@ export let queryClient = new QueryClient(config.queryClientConfig);
  */
 export function getQueryClient(): QueryClient {
   return queryClient;
+}
+
+/**
+ * Attach an external QueryClient (e.g. app-level QueryClientProvider client).
+ *
+ * Why:
+ * - `useHook` uses the app's QueryClient from context.
+ * - Direct service calls (e.g. `AmplifyService.Model.create()`) historically updated ONLY the internal singleton client,
+ *   so hook caches would not update.
+ *
+ * Attaching lets BOTH direct service calls and hooks operate on the same QueryClient.
+ */
+export function attachQueryClient(externalClient: QueryClient) {
+  if (!externalClient) return;
+  if (queryClient === externalClient) return;
+  queryClient = externalClient;
+  isExternalClientAttached = true;
+
+  // Best-effort: also enable persistence on the external client if configured.
+  setupPersistenceFor(queryClient);
+}
+
+/**
+ * Detach and revert to the internal QueryClient.
+ * (Mostly useful for tests or advanced setups.)
+ */
+export function detachQueryClient() {
+  if (!isExternalClientAttached) return;
+  queryClient = internalQueryClient;
+  isExternalClientAttached = false;
 }
 
 /**
@@ -149,41 +216,15 @@ export function configure(options: ConfigOptions = {}) {
     JSON.stringify(options.queryClientConfig) !==
       JSON.stringify(prevConfig.queryClientConfig)
   ) {
-    queryClient = new QueryClient(config.queryClientConfig);
+    internalQueryClient = new QueryClient(config.queryClientConfig);
+    // Only swap the exported client if we aren't bound to an external one.
+    if (!isExternalClientAttached) {
+      queryClient = internalQueryClient;
+    }
   }
 
   // Apply caching config
-  if (config.isCachingEnabled) {
-    debugLog("🏃‍♀️ React Query offline cache is enabled with MMKV.");
-
-    // Create new persister if config changed
-    const mmkvPersister = createMmkvPersister();
-
-    try {
-      // Lazy-load persistQueryClient to avoid hard dependency resolution at build time.
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { persistQueryClient } = require("@tanstack/react-query-persist-client");
-
-      persistQueryClient({
-        queryClient,
-        persister: mmkvPersister as any,
-        // Additional options
-        maxAge: config.storage?.maxAge || 1000 * 60 * 60 * 24 * 7, // Default 7 days
-        dehydrateOptions: {
-          shouldDehydrateQuery: (query: any) => {
-            // Only persist successful queries to reduce hydration cancellation noise
-            if (query.state?.status !== "success") return false;
-            // Avoid persisting mutation-like or transient keys if needed later
-            return true;
-          },
-        },
-      });
-    } catch (e) {
-      console.error("Error setting up React Query persistence:", e);
-    }
-  } else {
-    debugLog("🏃‍♀️ React Query offline cache is disabled via flag.");
-  }
+  setupPersistenceFor(queryClient);
 }
 
 /**
