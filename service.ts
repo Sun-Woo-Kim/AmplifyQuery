@@ -1610,9 +1610,15 @@ export function createAmplifyService<T extends BaseModel>(
           : [modelName, "query", queryName, JSON.stringify(enhancedArgs)];
 
         // Check cache first (if forceRefresh is false)
+        // Important: respect invalidation state so we don't serve stale data after direct mutations.
         if (!options.forceRefresh) {
           const cachedItems = queryClient.getQueryData<T[]>(queryKey);
-          if (cachedItems && cachedItems.length > 0) {
+          const queryState = queryClient.getQueryState(queryKey);
+          if (
+            cachedItems &&
+            cachedItems.length > 0 &&
+            !queryState?.isInvalidated
+          ) {
             debugLog(`🍬 ${modelName} ${queryName} using cache`);
             return cachedItems.filter((item: any) => item !== null);
           }
