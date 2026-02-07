@@ -1,3 +1,10 @@
+## [2.0.10](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.9...v2.0.10) (2026-02-07)
+
+
+### fix
+
+* remove storage ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/d8e65810694c96aa8234d6152f66c7c0eb180109))
+
 ## [2.0.9](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.8...v2.0.9) (2026-02-07)
 
 
