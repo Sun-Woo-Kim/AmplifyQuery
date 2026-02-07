@@ -51,9 +51,9 @@
   },
   "peerDependencies": {
     "react": ">=19.1.0",
-    "zustand": ">=5.0.8",
-    "@tanstack/react-query": ">=5.90.10",
-    "aws-amplify": ">=6.15.8"
+    "zustand": "*",
+    "@tanstack/react-query": "*",
+    "aws-amplify": "*"
   },
   "peerDependenciesMeta": {
     "expo": {
