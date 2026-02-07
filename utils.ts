@@ -4,46 +4,6 @@ import { getCurrentUser } from "aws-amplify/auth";
 import { useCallback } from "react";
 import { debugLog, debugWarn } from "./config";
 
-type MmkvLike = {
-  set: (key: string, value: any) => void;
-  getString: (key: string) => string | undefined;
-};
-
-function createMmkvStorage(id: string): MmkvLike {
-  // Support both react-native-mmkv v3 (class MMKV) and v4 (createMMKV factory)
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const mmkv: any = require("react-native-mmkv");
-  if (typeof mmkv.createMMKV === "function") {
-    return mmkv.createMMKV({ id }) as MmkvLike;
-  }
-  if (typeof mmkv.MMKV === "function") {
-    return new mmkv.MMKV({ id }) as MmkvLike;
-  }
-  throw new Error("react-native-mmkv is not available in this runtime");
-}
-
-// Create MMKV storage instance
-const storage = createMmkvStorage("mmkv.amplify-query");
-
-// Key for managing app URL
-const APP_URL_KEY = "amplify_query_app_url";
-
-/**
- * Set the base URL for the app
- * @param url Base URL for the app
- */
-export function setAppUrl(url: string): void {
-  storage.set(APP_URL_KEY, url);
-}
-
-/**
- * Get the base URL for the app
- * @returns Configured app URL or empty string
- */
-export function getAppUrl(): string {
-  return storage.getString(APP_URL_KEY) || "";
-}
-
 /**
  * Utility functions
  */

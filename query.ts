@@ -1,12 +1,13 @@
 import { QueryClient, QueryClientConfig } from "@tanstack/react-query";
 import { debugLog } from "./config";
+import { createStorage, StorageLike } from "./storage";
 
 // Default configuration values
 type ConfigOptions = {
   isCachingEnabled?: boolean;
   queryClientConfig?: QueryClientConfig;
   storage?: {
-    mmkvId?: string;
+    storageId?: string; // Renamed from mmkvId for platform-agnostic naming
     cacheKey?: string;
     maxAge?: number; // Maximum cache age in milliseconds
   };
@@ -14,7 +15,14 @@ type ConfigOptions = {
 
 // Default configuration
 const config: ConfigOptions = {
-  isCachingEnabled: process.env.EXPO_PUBLIC_DISABLE_STORAGE_CACHE !== "true",
+  // Check for both Expo and generic environment variables
+  isCachingEnabled:
+    typeof process !== "undefined" &&
+    process.env &&
+    (process.env.EXPO_PUBLIC_DISABLE_STORAGE_CACHE === "true" ||
+      process.env.DISABLE_STORAGE_CACHE === "true")
+      ? false
+      : true,
   queryClientConfig: {
     defaultOptions: {
       queries: {
@@ -34,47 +42,25 @@ const config: ConfigOptions = {
     },
   },
   storage: {
-    mmkvId: "mmkv.amplify-query.cache",
+    storageId: "amplify-query.cache",
     cacheKey: "REACT_QUERY_OFFLINE_CACHE",
     maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
   },
 };
 
-// MMKV instance
-type MmkvLike = {
-  set: (key: string, value: any) => void;
-  getString: (key: string) => string | undefined;
-  remove?: (key: string) => boolean;
-  delete?: (key: string) => void;
-  clearAll?: () => void;
-};
+let storageInstance: StorageLike | null = null;
 
-let storageInstance: MmkvLike | null = null; // Renamed from 'storage' to avoid conflict with ConfigOptions.storage
-
-function getOrCreateMmkv(id: string): MmkvLike {
+function getOrCreateStorage(id: string): StorageLike {
   if (storageInstance) return storageInstance;
-
-  // Support both react-native-mmkv v3 (class MMKV) and v4 (createMMKV factory)
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const mmkv: any = require("react-native-mmkv");
-  if (typeof mmkv.createMMKV === "function") {
-    const created: MmkvLike = mmkv.createMMKV({ id });
-    storageInstance = created;
-    return created;
-  }
-  if (typeof mmkv.MMKV === "function") {
-    const created: MmkvLike = new mmkv.MMKV({ id });
-    storageInstance = created;
-    return created;
-  }
-  throw new Error("react-native-mmkv is not available in this runtime");
+  storageInstance = createStorage(id);
+  return storageInstance;
 }
 
-// Function to create MMKV persister
-function createMmkvPersister() {
-  // Initialize or reuse MMKV instance
-  const mmkvId = config.storage?.mmkvId || "mmkv.amplify-query.cache";
-  const storage = getOrCreateMmkv(mmkvId);
+// Function to create storage persister
+function createStoragePersister() {
+  // Initialize or reuse storage instance
+  const storageId = config.storage?.storageId || "amplify-query.cache";
+  const storage = getOrCreateStorage(storageId);
 
   // Check cache key
   const cacheKey = config.storage?.cacheKey || "REACT_QUERY_OFFLINE_CACHE";
@@ -103,7 +89,7 @@ function createMmkvPersister() {
     },
     removeClient: () => {
       try {
-        // v3 uses delete(), v4 uses remove()
+        // Try remove() first, then delete(), then clearAll()
         if (typeof storage.remove === "function") {
           storage.remove(cacheKey);
         } else if (typeof storage.delete === "function") {
@@ -125,10 +111,10 @@ function setupPersistenceFor(client: QueryClient) {
     return;
   }
 
-  debugLog("🏃‍♀️ React Query offline cache is enabled with MMKV.");
+  debugLog("🏃‍♀️ React Query offline cache is enabled with persistent storage.");
 
   // Create new persister if config changed
-  const mmkvPersister = createMmkvPersister();
+  const storagePersister = createStoragePersister();
 
   try {
     // Lazy-load persistQueryClient to avoid hard dependency resolution at build time.
@@ -137,7 +123,7 @@ function setupPersistenceFor(client: QueryClient) {
 
     persistQueryClient({
       queryClient: client,
-      persister: mmkvPersister as any,
+      persister: storagePersister as any,
       // Additional options
       maxAge: config.storage?.maxAge || 1000 * 60 * 60 * 24 * 7, // Default 7 days
       dehydrateOptions: {

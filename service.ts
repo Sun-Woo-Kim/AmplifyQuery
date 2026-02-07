@@ -26,7 +26,7 @@ import {
   QueryKey,
 } from "@tanstack/react-query";
 import { getCurrentUser } from "aws-amplify/auth";
-import { randomUUID } from "expo-crypto";
+import { randomUUID } from "./uuid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // -------------------------------

@@ -4158,7 +4158,7 @@ balanced-match@^1.0.0:
   resolved "https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz"
   integrity sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==
 
-base64-js@^1.0.2, base64-js@^1.2.3, base64-js@^1.3.1, base64-js@^1.5.1:
+base64-js@^1.0.2, base64-js@^1.2.3, base64-js@^1.3.0, base64-js@^1.3.1, base64-js@^1.5.1:
   version "1.5.1"
   resolved "https://registry.npmjs.org/base64-js/-/base64-js-1.5.1.tgz"
   integrity sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==
@@ -5520,6 +5520,13 @@ expo-constants@~17.1.5, expo-constants@~17.1.6:
   dependencies:
     "@expo/config" "~11.0.9"
     "@expo/env" "~1.0.5"
+
+expo-crypto@>=14:
+  version "15.0.8"
+  resolved "https://registry.yarnpkg.com/expo-crypto/-/expo-crypto-15.0.8.tgz#339198aae149b3ccc0b44f7150d7261a3a1f5287"
+  integrity sha512-aF7A914TB66WIlTJvl5J6/itejfY78O7dq3ibvFltL9vnTALJ/7LYHvLT4fwmx9yUNS6ekLBtDGWivFWnj2Fcw==
+  dependencies:
+    base64-js "^1.3.0"
 
 expo-file-system@~18.1.10:
   version "18.1.10"
@@ -8596,10 +8603,10 @@ react-native-edge-to-edge@1.6.0:
   resolved "https://registry.npmjs.org/react-native-edge-to-edge/-/react-native-edge-to-edge-1.6.0.tgz"
   integrity sha512-2WCNdE3Qd6Fwg9+4BpbATUxCLcouF6YRY7K+J36KJ4l3y+tWN6XCqAC4DuoGblAAbb2sLkhEDp4FOlbOIot2Og==
 
-react-native-mmkv@3.3.1:
-  version "3.3.1"
-  resolved "https://registry.npmjs.org/react-native-mmkv/-/react-native-mmkv-3.3.1.tgz"
-  integrity sha512-LYamDWQirPTUJZ9Re+BkCD+zLRGNr+EVJDeIeblvoJXGatWy9PXnChtajDSLqwjX3EXVeUyjgrembs7wlBw9ug==
+react-native-mmkv@>=3.3.1:
+  version "4.1.2"
+  resolved "https://registry.yarnpkg.com/react-native-mmkv/-/react-native-mmkv-4.1.2.tgz#fb337930ec50d509392832c649b578a00c0d008e"
+  integrity sha512-6LHb2DQBXuo96Aues13EugmlWw/HAYuh3KoJoQNrC4JsBwn3J3KiRYAg2mCm5Je0VYq2YsmbgZG7XJwX/WFYZA==
 
 react-refresh@^0.14.0, react-refresh@^0.14.2:
   version "0.14.2"

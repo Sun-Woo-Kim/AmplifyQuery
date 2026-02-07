@@ -19,8 +19,6 @@ import {
   AuthService as AuthServiceUtil,
   Utils as UtilsHelper,
   createRelationalHook,
-  setAppUrl,
-  getAppUrl,
 } from "./utils";
 import {
   setModelOwnerQueryMap,
@@ -50,7 +48,7 @@ import {
  *   // Additional caching options, etc.
  *   isCachingEnabled: true,
  *   storage: {
- *     mmkvId: "custom.cache",
+ *     storageId: "custom.cache",
  *     maxAge: 1000 * 60 * 60 * 24 // 1 day
  *   }
  * });
@@ -118,7 +116,6 @@ export * from "./provider";
 // Re-export utility services
 export const Utils = UtilsHelper;
 export const Auth = AuthServiceUtil;
-export { setAppUrl, getAppUrl };
 
 /**
  * Main object for the AmplifyQuery library.

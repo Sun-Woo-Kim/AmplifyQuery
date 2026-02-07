@@ -225,7 +225,7 @@ export interface AmplifyQueryConfig {
   isCachingEnabled?: boolean;
   queryClientConfig?: QueryClientConfig;
   storage?: {
-    mmkvId?: string;
+    storageId?: string; // Platform-agnostic storage identifier (MMKV id for RN, localStorage key prefix for web)
     cacheKey?: string;
     maxAge?: number; // Maximum cache age in milliseconds
   };

@@ -6,7 +6,7 @@ A library that combines AWS Amplify and React Query, making it easier to manage 
 
 - 💡 **Simple Type-Based API**: Written in TypeScript for complete type safety and autocompletion support.
 - 🔄 **React Query Integration**: Leverage all React Query features like caching, retries, background updates, etc.
-- 📱 **Offline Support**: Persistent query caching via MMKV for fast data loading even offline.
+- 📱 **Offline Support**: Persistent query caching via platform-agnostic storage (MMKV for React Native, localStorage for Web) for fast data loading even offline.
 - 🪝 **Convenient Hooks API**: Abstract complex data synchronization into simple Hooks.
 - 🔴 **Realtime Subscriptions**: Built-in support for AWS Amplify realtime updates with automatic cache synchronization.
 - 🛡 **Auth Mode Support**: Supports various AWS Amplify authentication modes (API Key, IAM, Cognito, etc.).
@@ -62,7 +62,7 @@ AmplifyQuery.configure({
 
   // Storage configuration (optional)
   storage: {
-    mmkvId: "my-app.cache", // MMKV store ID
+    storageId: "my-app.cache", // Storage identifier (MMKV id for React Native, localStorage key prefix for Web)
     cacheKey: "MY_QUERY_CACHE", // Cache key name
     maxAge: 1000 * 60 * 60 * 24 * 3, // 3 days (in milliseconds)
   },
@@ -446,7 +446,7 @@ const TodoService = AmplifyQuery.createAmplifyService<Todo>("Todo");
 
 ### Caching
 
-AmplifyQuery uses MMKV to persistently cache query results. This allows the app to display previous data immediately upon restart.
+AmplifyQuery uses platform-agnostic persistent storage (MMKV for React Native, localStorage for Web) to cache query results. This allows the app to display previous data immediately upon restart.
 
 ```typescript
 // Enable/disable caching (enabled by default)
