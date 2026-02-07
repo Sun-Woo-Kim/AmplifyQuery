@@ -1,3 +1,10 @@
+## [2.0.9](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.8...v2.0.9) (2026-02-07)
+
+
+### fix
+
+* feat: add web platform support with localStorage fallback ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/c880a12a0053ed390653332f21524c3d761535ef))
+
 ## [2.0.8](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.7...v2.0.8) (2026-01-31)
 
 
