@@ -1,28 +1,13 @@
 import { QueryClient, QueryClientConfig } from "@tanstack/react-query";
 import { debugLog } from "./config";
-import { createStorage, StorageLike } from "./storage";
 
 // Default configuration values
 type ConfigOptions = {
-  isCachingEnabled?: boolean;
   queryClientConfig?: QueryClientConfig;
-  storage?: {
-    storageId?: string; // Renamed from mmkvId for platform-agnostic naming
-    cacheKey?: string;
-    maxAge?: number; // Maximum cache age in milliseconds
-  };
 };
 
 // Default configuration
 const config: ConfigOptions = {
-  // Check for both Expo and generic environment variables
-  isCachingEnabled:
-    typeof process !== "undefined" &&
-    process.env &&
-    (process.env.EXPO_PUBLIC_DISABLE_STORAGE_CACHE === "true" ||
-      process.env.DISABLE_STORAGE_CACHE === "true")
-      ? false
-      : true,
   queryClientConfig: {
     defaultOptions: {
       queries: {
@@ -41,104 +26,7 @@ const config: ConfigOptions = {
       },
     },
   },
-  storage: {
-    storageId: "amplify-query.cache",
-    cacheKey: "REACT_QUERY_OFFLINE_CACHE",
-    maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
-  },
 };
-
-let storageInstance: StorageLike | null = null;
-
-function getOrCreateStorage(id: string): StorageLike {
-  if (storageInstance) return storageInstance;
-  storageInstance = createStorage(id);
-  return storageInstance;
-}
-
-// Function to create storage persister
-function createStoragePersister() {
-  // Initialize or reuse storage instance
-  const storageId = config.storage?.storageId || "amplify-query.cache";
-  const storage = getOrCreateStorage(storageId);
-
-  // Check cache key
-  const cacheKey = config.storage?.cacheKey || "REACT_QUERY_OFFLINE_CACHE";
-
-  return {
-    persistClient: (client: any) => {
-      try {
-        // Convert object to JSON string
-        const clientStr = JSON.stringify(client);
-        storage.set(cacheKey, clientStr);
-      } catch (error) {
-        console.error("Error saving cache:", error);
-      }
-    },
-    restoreClient: () => {
-      try {
-        const clientStr = storage.getString(cacheKey);
-        if (!clientStr) return null;
-
-        // Convert string back to object
-        return JSON.parse(clientStr);
-      } catch (error) {
-        console.error("Error restoring cache:", error);
-        return null;
-      }
-    },
-    removeClient: () => {
-      try {
-        // Try remove() first, then delete(), then clearAll()
-        if (typeof storage.remove === "function") {
-          storage.remove(cacheKey);
-        } else if (typeof storage.delete === "function") {
-          storage.delete(cacheKey);
-        } else if (typeof storage.clearAll === "function") {
-          // As a last resort, clear all
-          storage.clearAll();
-        }
-      } catch (error) {
-        console.error("Error removing cache:", error);
-      }
-    },
-  };
-}
-
-function setupPersistenceFor(client: QueryClient) {
-  if (!config.isCachingEnabled) {
-    debugLog("🏃‍♀️ React Query offline cache is disabled via flag.");
-    return;
-  }
-
-  debugLog("🏃‍♀️ React Query offline cache is enabled with persistent storage.");
-
-  // Create new persister if config changed
-  const storagePersister = createStoragePersister();
-
-  try {
-    // Lazy-load persistQueryClient to avoid hard dependency resolution at build time.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { persistQueryClient } = require("@tanstack/react-query-persist-client");
-
-    persistQueryClient({
-      queryClient: client,
-      persister: storagePersister as any,
-      // Additional options
-      maxAge: config.storage?.maxAge || 1000 * 60 * 60 * 24 * 7, // Default 7 days
-      dehydrateOptions: {
-        shouldDehydrateQuery: (query: any) => {
-          // Only persist successful queries to reduce hydration cancellation noise
-          if (query.state?.status !== "success") return false;
-          // Avoid persisting mutation-like or transient keys if needed later
-          return true;
-        },
-      },
-    });
-  } catch (e) {
-    console.error("Error setting up React Query persistence:", e);
-  }
-}
 
 /**
  * TanStack Query client
@@ -170,9 +58,8 @@ export function attachQueryClient(externalClient: QueryClient) {
   if (queryClient === externalClient) return;
   queryClient = externalClient;
   isExternalClientAttached = true;
-
-  // Best-effort: also enable persistence on the external client if configured.
-  setupPersistenceFor(queryClient);
+  
+  debugLog("🔗 External QueryClient attached to AmplifyQuery");
 }
 
 /**
@@ -207,10 +94,9 @@ export function configure(options: ConfigOptions = {}) {
     if (!isExternalClientAttached) {
       queryClient = internalQueryClient;
     }
+    
+    debugLog("⚙️ AmplifyQuery configuration updated");
   }
-
-  // Apply caching config
-  setupPersistenceFor(queryClient);
 }
 
 /**

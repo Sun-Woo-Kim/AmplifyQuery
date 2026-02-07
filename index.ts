@@ -82,9 +82,7 @@ export function configure(config: AmplifyQueryConfig): void {
 
   // Apply React Query settings
   configureQuery({
-    isCachingEnabled: config.isCachingEnabled,
     queryClientConfig: config.queryClientConfig,
-    storage: config.storage,
   });
 
   debugLog("🔌 AmplifyQuery initialized successfully.");
