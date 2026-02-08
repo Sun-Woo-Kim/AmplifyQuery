@@ -19,6 +19,7 @@ import {
   AuthService as AuthServiceUtil,
   Utils as UtilsHelper,
   createRelationalHook,
+  type RelationalHookOptions,
 } from "./utils";
 import {
   setModelOwnerQueryMap,

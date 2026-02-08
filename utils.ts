@@ -1,7 +1,8 @@
 import { AmplifyDataService, ModelHook, BaseModel } from "./types";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getCurrentUser } from "aws-amplify/auth";
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
+import { getClient } from "./client";
 import { debugLog, debugWarn } from "./config";
 
 /**
@@ -90,6 +91,18 @@ export const AuthService = {
  * @param idParamName ID parameter name (e.g., dailyId, userId)
  * @returns Relational query hook function
  */
+export interface RelationalHookOptions {
+  initialFetchOptions?: {
+    fetch?: boolean;
+    filter?: Record<string, any>;
+  };
+  realtime?: {
+    enabled?: boolean;
+    observeOptions?: Record<string, any>;
+    events?: Array<"create" | "update" | "delete">;
+  };
+}
+
 export function createRelationalHook<
   T extends BaseModel,
   R extends BaseModel = any
@@ -98,8 +111,8 @@ export function createRelationalHook<
   relationName: string,
   queryName: string,
   idParamName = `${relationName.toLowerCase()}Id`
-): (id: string) => ModelHook<T> {
-  return (id: string) => {
+): (id: string, options?: RelationalHookOptions) => ModelHook<T> {
+  return (id: string, options?: RelationalHookOptions) => {
     // Create query key - set dedicated cache key for specific relation ID
     const queryKey = [
       service.modelName,
@@ -109,6 +122,8 @@ export function createRelationalHook<
       queryName,
       JSON.stringify({ [idParamName]: id }),
     ];
+
+    const hookQueryClient = useQueryClient();
 
     // Get only CRUD methods from existing hook
     const baseHook = service.useHook({
@@ -129,6 +144,71 @@ export function createRelationalHook<
       staleTime: 1000 * 30, // Keep fresh for 30 seconds
       gcTime: 1000 * 60 * 5, // Keep in cache for 5 minutes
     });
+
+    // Realtime subscriptions (onCreate/onUpdate/onDelete → invalidate query cache)
+    const realtimeEnabled = options?.realtime?.enabled === true;
+    const realtimeEvents = options?.realtime?.events ?? ["create", "update", "delete"];
+    // Stable string key for useEffect dependency (avoids re-subscribing on every render)
+    const queryKeyStr = JSON.stringify(queryKey);
+
+    useEffect(() => {
+      if (!realtimeEnabled || !id) return;
+
+      let client: any;
+      try {
+        client = getClient();
+      } catch {
+        return;
+      }
+      const model = (client.models as any)?.[service.modelName];
+      if (!model) return;
+
+      const observeOptions = {
+        ...(options?.realtime?.observeOptions || {}),
+      } as Record<string, any>;
+
+      // If no explicit filter, use the relation ID filter
+      if (observeOptions.filter === undefined) {
+        observeOptions.filter = { [idParamName]: { eq: id } };
+      }
+
+      const stableQueryKey = JSON.parse(queryKeyStr);
+      const invalidate = () => {
+        hookQueryClient.invalidateQueries({
+          queryKey: stableQueryKey,
+          refetchType: "active",
+        });
+      };
+
+      const subscriptions = [
+        realtimeEvents.includes("create") && model.onCreate
+          ? model.onCreate(observeOptions).subscribe({
+              next: invalidate,
+              error: (err: any) =>
+                console.error(`🍬 ${service.modelName} relational onCreate error:`, err),
+            })
+          : null,
+        realtimeEvents.includes("update") && model.onUpdate
+          ? model.onUpdate(observeOptions).subscribe({
+              next: invalidate,
+              error: (err: any) =>
+                console.error(`🍬 ${service.modelName} relational onUpdate error:`, err),
+            })
+          : null,
+        realtimeEvents.includes("delete") && model.onDelete
+          ? model.onDelete(observeOptions).subscribe({
+              next: invalidate,
+              error: (err: any) =>
+                console.error(`🍬 ${service.modelName} relational onDelete error:`, err),
+            })
+          : null,
+      ].filter(Boolean);
+
+      return () => {
+        subscriptions.forEach((sub: any) => sub?.unsubscribe?.());
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [realtimeEnabled, id, service.modelName, hookQueryClient, queryKeyStr]);
 
     // Custom CRUD methods specific to the ID
     const createItem = useCallback(
