@@ -1,3 +1,10 @@
+## [2.0.13](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.12...v2.0.13) (2026-02-08)
+
+
+### fix
+
+* relatedquery에도 realtime 추가 ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/3836b1f338aa7896f283970d97d1fb335cab3678))
+
 ## [2.0.12](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.11...v2.0.12) (2026-02-07)
 
 
