@@ -5,6 +5,8 @@
 // Global configuration state
 let globalConfig: {
   modelOwnerQueryMap?: Record<string, string>;
+  awsJsonFieldMap?: Record<string, string[]>;
+  awsJsonAutoTransform?: boolean;
   defaultAuthMode?:
     | "apiKey"
     | "iam"
@@ -52,6 +54,51 @@ export function debugWarn(...args: any[]): void {
 export function setModelOwnerQueryMap(queryMap: Record<string, string>): void {
   globalConfig.modelOwnerQueryMap = { ...queryMap };
   debugLog("🔧 AmplifyQuery: Global model owner query map configured");
+}
+
+/**
+ * Set the global model AWSJSON field mapping
+ * @param fieldMap Mapping of model names to AWSJSON field names
+ */
+export function setAwsJsonFieldMap(
+  fieldMap: Record<string, string[]>
+): void {
+  const normalized: Record<string, string[]> = {};
+  Object.entries(fieldMap || {}).forEach(([modelName, fields]) => {
+    if (!Array.isArray(fields)) {
+      normalized[modelName] = [];
+      return;
+    }
+    normalized[modelName] = fields.filter(
+      (field): field is string => typeof field === "string" && field.length > 0
+    );
+  });
+  globalConfig.awsJsonFieldMap = normalized;
+  debugLog("🔧 AmplifyQuery: Global AWSJSON field map configured", normalized);
+}
+
+/**
+ * Get global AWSJSON field mapping
+ * @returns Model-to-fields mapping or undefined
+ */
+export function getAwsJsonFieldMap(): Record<string, string[]> | undefined {
+  return globalConfig.awsJsonFieldMap;
+}
+
+/**
+ * Enable/disable automatic AWSJSON transform.
+ * When enabled, service layer stringifies configured AWSJSON fields on writes
+ * and parses them back on reads.
+ */
+export function setAwsJsonAutoTransform(enabled: boolean): void {
+  globalConfig.awsJsonAutoTransform = enabled === true;
+  debugLog(
+    `🔧 AmplifyQuery: AWSJSON auto transform set to ${globalConfig.awsJsonAutoTransform}`
+  );
+}
+
+export function isAwsJsonAutoTransformEnabled(): boolean {
+  return globalConfig.awsJsonAutoTransform === true;
 }
 
 /**

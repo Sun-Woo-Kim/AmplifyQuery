@@ -124,6 +124,18 @@ function getIndexes(models) {
   return out;
 }
 
+function getAwsJsonFieldsByModel(models) {
+  const out = {};
+  for (const [modelName, modelDef] of Object.entries(models || {})) {
+    const fields = modelDef?.fields || {};
+    const awsJsonFields = Object.entries(fields)
+      .filter(([, fieldDef]) => fieldDef?.type === "AWSJSON")
+      .map(([fieldName]) => fieldName);
+    out[modelName] = awsJsonFields;
+  }
+  return out;
+}
+
 function inferBelongsToTargetModel(models, modelName, idFieldName) {
   // Find a field that BELONGS_TO and targets idFieldName, then return the related model name
   const modelDef = models?.[modelName];
@@ -159,6 +171,7 @@ function generateTs({ outputsJson, headerComment }) {
 
   const ownerQueryMap = pickOwnerQueryMap(models);
   const indexesByModel = getIndexes(models);
+  const awsJsonFieldsByModel = getAwsJsonFieldsByModel(models);
 
   const lines = [];
   lines.push("/* eslint-disable */");
@@ -218,6 +231,14 @@ function generateTs({ outputsJson, headerComment }) {
   // owner query map export (optional but useful for configure)
   lines.push(`export const modelOwnerQueryMap: Record<string, string> = ${JSON.stringify(ownerQueryMap, null, 2)};`);
   lines.push("");
+  lines.push(
+    `export const modelAwsJsonFieldMap: Record<string, string[]> = ${JSON.stringify(
+      awsJsonFieldsByModel,
+      null,
+      2
+    )};`
+  );
+  lines.push("");
 
   // Auth utils
   lines.push("export const AuthUtils = {");
@@ -230,7 +251,13 @@ function generateTs({ outputsJson, headerComment }) {
   // Services
   // Base services
   for (const modelName of modelNames) {
-    lines.push(`const ${modelName}Base = AmplifyQuery.createAmplifyService<${modelName}>(${JSON.stringify(modelName)});`);
+    lines.push(
+      `const ${modelName}Base = AmplifyQuery.createAmplifyService<${modelName}>(${JSON.stringify(
+        modelName
+      )}, undefined, { awsJsonFields: modelAwsJsonFieldMap[${JSON.stringify(
+        modelName
+      )}] || [], awsJsonAutoTransform: true });`
+    );
   }
   lines.push("");
 
@@ -248,6 +275,7 @@ function generateTs({ outputsJson, headerComment }) {
 
     // Build extensions object for keys
     const extensionLines = [];
+    const usedExtensionNames = new Set();
 
     for (const k of keys) {
       // Only support single-field indexes for POC (easy to call and type)
@@ -256,9 +284,33 @@ function generateTs({ outputsJson, headerComment }) {
       const queryName = k.queryField;
       if (typeof fieldName !== "string" || typeof queryName !== "string") continue;
 
-      const suffix = pascalCase(fieldName.replace(/Id$/, "")); // userId -> User, status -> Status
-      const listFnName = `listBy${suffix}`;
-      const hookFnName = `useListBy${suffix}Hook`;
+      const baseSuffix = pascalCase(fieldName.replace(/Id$/, "")); // userId -> User, status -> Status
+      const fallbackSuffix = pascalCase(fieldName); // userId -> UserId
+      let suffix = baseSuffix;
+      let listFnName = `listBy${suffix}`;
+      let hookFnName = `useListBy${suffix}Hook`;
+
+      if (usedExtensionNames.has(listFnName) || usedExtensionNames.has(hookFnName)) {
+        suffix = fallbackSuffix;
+        listFnName = `listBy${suffix}`;
+        hookFnName = `useListBy${suffix}Hook`;
+      }
+
+      if (usedExtensionNames.has(listFnName) || usedExtensionNames.has(hookFnName)) {
+        let i = 2;
+        while (
+          usedExtensionNames.has(`listBy${fallbackSuffix}${i}`) ||
+          usedExtensionNames.has(`useListBy${fallbackSuffix}${i}Hook`)
+        ) {
+          i += 1;
+        }
+        suffix = `${fallbackSuffix}${i}`;
+        listFnName = `listBy${suffix}`;
+        hookFnName = `useListBy${suffix}Hook`;
+      }
+
+      usedExtensionNames.add(listFnName);
+      usedExtensionNames.add(hookFnName);
 
       // Determine param type from schema field
       const fieldDef = models?.[modelName]?.fields?.[fieldName];
@@ -351,4 +403,3 @@ function main() {
 }
 
 main();
-

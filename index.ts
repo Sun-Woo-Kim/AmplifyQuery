@@ -23,8 +23,12 @@ import {
 } from "./utils";
 import {
   setModelOwnerQueryMap,
+  setAwsJsonFieldMap,
+  setAwsJsonAutoTransform,
   setDefaultAuthMode,
   getModelOwnerQueryMap,
+  getAwsJsonFieldMap,
+  isAwsJsonAutoTransformEnabled,
   getDefaultAuthMode,
   resetConfig,
   setSingletonAutoCreate,
@@ -69,6 +73,16 @@ export function configure(config: AmplifyQueryConfig): void {
   // Set global model owner query mapping
   if (config.modelOwnerQueryMap) {
     setModelOwnerQueryMap(config.modelOwnerQueryMap);
+  }
+
+  // Set global AWSJSON field map
+  if (config.awsJsonFieldMap) {
+    setAwsJsonFieldMap(config.awsJsonFieldMap);
+  }
+
+  // Set AWSJSON auto transform mode
+  if (typeof config.awsJsonAutoTransform === "boolean") {
+    setAwsJsonAutoTransform(config.awsJsonAutoTransform);
   }
 
   // Set default auth mode
@@ -132,6 +146,10 @@ export const AmplifyQuery = {
   // Global configuration functions
   setModelOwnerQueryMap,
   getModelOwnerQueryMap,
+  setAwsJsonFieldMap,
+  getAwsJsonFieldMap,
+  setAwsJsonAutoTransform,
+  isAwsJsonAutoTransformEnabled,
   setDefaultAuthMode,
   getDefaultAuthMode,
   resetConfig,

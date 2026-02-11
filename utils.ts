@@ -55,6 +55,44 @@ export const Utils = {
     }
     return dataWithoutOwner;
   },
+
+  /**
+   * Parse JSON-ish value safely.
+   * - string: tries JSON.parse
+   * - object/array: returns as-is
+   * - otherwise: null
+   */
+  parseJsonDoc: <T = unknown>(value: unknown): T | null => {
+    if (typeof value === "string") {
+      try {
+        return JSON.parse(value) as T;
+      } catch (_error) {
+        return null;
+      }
+    }
+    if (value !== null && typeof value === "object") {
+      return value as T;
+    }
+    return null;
+  },
+
+  /**
+   * Stringify JSON-ish value safely.
+   * - valid JSON string: returns as-is
+   * - invalid string: JSON.stringify(string)
+   * - others: JSON.stringify(value ?? null)
+   */
+  stringifyJsonDoc: (value: unknown): string => {
+    if (typeof value === "string") {
+      try {
+        JSON.parse(value);
+        return value;
+      } catch (_error) {
+        return JSON.stringify(value);
+      }
+    }
+    return JSON.stringify(value ?? null);
+  },
 };
 
 /**

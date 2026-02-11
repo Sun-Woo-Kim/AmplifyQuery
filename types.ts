@@ -215,6 +215,21 @@ export interface AmplifyQueryConfig {
   // Model owner query mapping for global configuration
   modelOwnerQueryMap?: Record<string, string>;
 
+  /**
+   * Model AWSJSON field mapping.
+   * Example: { Recipe: ["steps", "variables"] }
+   */
+  awsJsonFieldMap?: Record<string, string[]>;
+
+  /**
+   * Automatically transform configured AWSJSON fields in service runtime.
+   * - write(create/update/upsert): object -> JSON string
+   * - read(get/list/customList/realtime): JSON string -> object/array/primitive
+   *
+   * Default: false (global). Generated services may opt-in per model.
+   */
+  awsJsonAutoTransform?: boolean;
+
   // Singleton auto-create (when singleton hook finds no item)
   singletonAutoCreate?: {
     enabled?: boolean;
@@ -229,4 +244,18 @@ export interface AmplifyQueryConfig {
     cacheKey?: string;
     maxAge?: number; // Maximum cache age in milliseconds
   };
+}
+
+export interface AwsJsonTransformOptions {
+  /**
+   * AWSJSON fields for this model.
+   * If omitted, global `awsJsonFieldMap[modelName]` is used.
+   */
+  awsJsonFields?: string[];
+
+  /**
+   * Override auto transform for this service only.
+   * If omitted, global `awsJsonAutoTransform` is used.
+   */
+  awsJsonAutoTransform?: boolean;
 }

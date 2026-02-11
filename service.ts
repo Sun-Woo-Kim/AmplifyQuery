@@ -2,6 +2,8 @@ import { getClient } from "./client";
 import {
   getOwnerQueryName,
   getDefaultAuthMode,
+  getAwsJsonFieldMap,
+  isAwsJsonAutoTransformEnabled,
   debugLog,
   debugWarn,
   isDebugEnabled,
@@ -14,6 +16,7 @@ import {
   BaseModel,
   ItemHook,
   ModelHook,
+  AwsJsonTransformOptions,
 } from "./types";
 import { Utils } from "./utils";
 import {
@@ -370,6 +373,99 @@ function isOwnerNotInSchemaError(err: unknown): boolean {
   );
 }
 
+function resolveAwsJsonTransformConfig(
+  modelName: string,
+  options?: AwsJsonTransformOptions
+): { enabled: boolean; fields: string[] } {
+  const globalFieldMap = getAwsJsonFieldMap();
+  const localFields = Array.isArray(options?.awsJsonFields)
+    ? options?.awsJsonFields
+    : undefined;
+  const fields = (localFields || globalFieldMap?.[modelName] || []).filter(
+    (field): field is string => typeof field === "string" && field.length > 0
+  );
+
+  const enabled =
+    typeof options?.awsJsonAutoTransform === "boolean"
+      ? options.awsJsonAutoTransform
+      : isAwsJsonAutoTransformEnabled();
+
+  return { enabled, fields };
+}
+
+function parseAwsJsonFieldValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch (_error) {
+      return value;
+    }
+  }
+  return value;
+}
+
+function stringifyAwsJsonFieldValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    try {
+      JSON.parse(value);
+      return value;
+    } catch (_error) {
+      return JSON.stringify(value);
+    }
+  }
+
+  if (value === undefined) return undefined;
+  return JSON.stringify(value ?? null);
+}
+
+function transformAwsJsonFieldsOnWrite(
+  record: unknown,
+  fields: string[],
+  enabled: boolean
+): unknown {
+  if (!enabled || fields.length === 0 || !record || typeof record !== "object") {
+    return record;
+  }
+
+  const next = { ...(record as Record<string, unknown>) };
+  fields.forEach((fieldName) => {
+    if (!(fieldName in next)) return;
+    const transformed = stringifyAwsJsonFieldValue(next[fieldName]);
+    if (transformed !== undefined) {
+      next[fieldName] = transformed;
+    }
+  });
+
+  return next;
+}
+
+function transformAwsJsonFieldsOnRead(
+  record: unknown,
+  fields: string[],
+  enabled: boolean
+): unknown {
+  if (!enabled || fields.length === 0 || !record || typeof record !== "object") {
+    return record;
+  }
+
+  const next = { ...(record as Record<string, unknown>) };
+  fields.forEach((fieldName) => {
+    if (!(fieldName in next)) return;
+    next[fieldName] = parseAwsJsonFieldValue(next[fieldName]);
+  });
+  return next;
+}
+
+function transformAwsJsonListOnRead(
+  items: unknown[],
+  fields: string[],
+  enabled: boolean
+): unknown[] {
+  if (!Array.isArray(items)) return [];
+  if (!enabled || fields.length === 0) return items;
+  return items.map((item) => transformAwsJsonFieldsOnRead(item, fields, enabled));
+}
+
 /**
  * Create model-specific Amplify service
  * @param modelName Model name
@@ -378,10 +474,12 @@ function isOwnerNotInSchemaError(err: unknown): boolean {
  */
 export function createAmplifyService<T extends BaseModel>(
   modelName: string,
-  defaultAuthMode?: AuthMode
+  defaultAuthMode?: AuthMode,
+  options?: AwsJsonTransformOptions
 ): AmplifyDataService<T> {
   // Track current authentication mode state - use global config if not provided
   let currentAuthMode: AuthMode = defaultAuthMode || getDefaultAuthMode();
+  const awsJsonConfig = resolveAwsJsonTransformConfig(modelName, options);
 
   // Create service object
   const service: AmplifyDataService<T> = {
@@ -435,6 +533,16 @@ export function createAmplifyService<T extends BaseModel>(
           ...cleanedData,
           id: cleanedData.id || randomUUID(),
         } as T;
+        const createPayload = transformAwsJsonFieldsOnWrite(
+          newItem,
+          awsJsonConfig.fields,
+          awsJsonConfig.enabled
+        ) as T;
+        const optimisticCreateItem = transformAwsJsonFieldsOnRead(
+          newItem,
+          awsJsonConfig.fields,
+          awsJsonConfig.enabled
+        ) as T;
 
         // Extract relation fields (e.g., dailyId, userId)
         const relationFields = new Map<string, string>();
@@ -456,7 +564,7 @@ export function createAmplifyService<T extends BaseModel>(
         const previousItemSingle =
           queryClient.getQueryData<T>(singleItemQueryKey);
         previousDataMap.set(singleItemQueryKey, previousItemSingle);
-        queryClient.setQueryData<T>(singleItemQueryKey, newItem);
+        queryClient.setQueryData<T>(singleItemQueryKey, optimisticCreateItem);
 
         // Update list queries (with relation filtering)
         relatedQueryKeys.forEach((queryKey) => {
@@ -485,7 +593,7 @@ export function createAmplifyService<T extends BaseModel>(
 
               queryClient.setQueryData(queryKey, (oldData: any) => {
                 const oldItems = Array.isArray(oldData) ? oldData : [];
-                return [...oldItems, newItem];
+                return [...oldItems, optimisticCreateItem];
               });
             }
           } else if (queryKey.length < 3 && queryKey[1] !== "currentId") {
@@ -500,7 +608,7 @@ export function createAmplifyService<T extends BaseModel>(
 
             queryClient.setQueryData(queryKey, (oldData: any) => {
               const oldItems = Array.isArray(oldData) ? oldData : [];
-              return [...oldItems, newItem];
+              return [...oldItems, optimisticCreateItem];
             });
           }
         });
@@ -515,10 +623,14 @@ export function createAmplifyService<T extends BaseModel>(
           // Some Amplify clients return `{ data, errors }` without throwing on errors.
           // If `data` is null/undefined, treat it as a failure and rollback.
           const res = await (getClient().models as any)[modelName].create(
-            newItem,
+            createPayload,
             authModeParams
           );
-          const createdItem = (res as any)?.data;
+          const createdItem = transformAwsJsonFieldsOnRead(
+            (res as any)?.data,
+            awsJsonConfig.fields,
+            awsJsonConfig.enabled
+          ) as T | null;
           const errors = (res as any)?.errors;
 
           if (createdItem) {
@@ -610,6 +722,22 @@ export function createAmplifyService<T extends BaseModel>(
             } as T;
           })
           .filter(Boolean) as T[];
+        const createPayloadItems = preparedItems.map(
+          (item) =>
+            transformAwsJsonFieldsOnWrite(
+              item,
+              awsJsonConfig.fields,
+              awsJsonConfig.enabled
+            ) as T
+        );
+        const optimisticPreparedItems = preparedItems.map(
+          (item) =>
+            transformAwsJsonFieldsOnRead(
+              item,
+              awsJsonConfig.fields,
+              awsJsonConfig.enabled
+            ) as T
+        );
 
         const relatedQueryKeys = findRelatedQueryKeys(modelName, queryClient);
         const previousDataMap = new Map<QueryKey, any>();
@@ -650,7 +778,7 @@ export function createAmplifyService<T extends BaseModel>(
               const oldItems = Array.isArray(oldData) ? oldData : [];
 
               // Filter new items that belong to this relation ID
-              const itemsToAdd = preparedItems.filter(
+              const itemsToAdd = optimisticPreparedItems.filter(
                 (newItem: any) => newItem[relationField] === relationId
               );
 
@@ -666,13 +794,13 @@ export function createAmplifyService<T extends BaseModel>(
             // Avoid internal singleton keys like ["User","currentId"].
             queryClient.setQueryData(queryKey, (oldData: any) => {
               const oldItems = Array.isArray(oldData) ? oldData : [];
-              return [...oldItems, ...preparedItems];
+              return [...oldItems, ...optimisticPreparedItems];
             });
           }
         });
 
         // Update individual item caches
-        preparedItems.forEach((item) => {
+        optimisticPreparedItems.forEach((item) => {
           const singleItemQueryKey: QueryKey = itemKey(modelName, item.id);
           const previousItemSingle =
             queryClient.getQueryData<T>(singleItemQueryKey);
@@ -682,13 +810,17 @@ export function createAmplifyService<T extends BaseModel>(
 
         try {
           // Parallel API calls - apply auth mode
-          const createPromises = preparedItems.map(async (newItem) => {
+          const createPromises = createPayloadItems.map(async (newItem) => {
             try {
               const res = await (getClient().models as any)[modelName].create(
                 newItem,
                 authModeParams
               );
-              const createdItem = (res as any)?.data;
+              const createdItem = transformAwsJsonFieldsOnRead(
+                (res as any)?.data,
+                awsJsonConfig.fields,
+                awsJsonConfig.enabled
+              ) as T | null;
               const errors = (res as any)?.errors;
 
               // Update individual item cache on API success
@@ -785,10 +917,16 @@ export function createAmplifyService<T extends BaseModel>(
         if (!options.forceRefresh) {
           const cachedItem = queryClient.getQueryData<T>(singleItemQueryKey);
           if (cachedItem) {
+            const parsedCachedItem = transformAwsJsonFieldsOnRead(
+              cachedItem,
+              awsJsonConfig.fields,
+              awsJsonConfig.enabled
+            ) as T;
             // 🔧 버그 수정: 캐시된 아이템의 실제 ID가 요청한 ID와 일치하는지 검증
-            const itemId = (cachedItem as any)?.id;
+            const itemId = (parsedCachedItem as any)?.id;
             if (itemId === id) {
-              return cachedItem;
+              queryClient.setQueryData(singleItemQueryKey, parsedCachedItem);
+              return parsedCachedItem;
             } else {
               // ID가 일치하지 않으면 캐시에서 제거하고 API 호출
               console.warn(
@@ -829,6 +967,11 @@ export function createAmplifyService<T extends BaseModel>(
             apiResponse[0] ||
             null;
         }
+        item = transformAwsJsonFieldsOnRead(
+          item,
+          awsJsonConfig.fields,
+          awsJsonConfig.enabled
+        );
 
         // Update cache
         if (item) {
@@ -898,7 +1041,13 @@ export function createAmplifyService<T extends BaseModel>(
             !queryState?.isInvalidated
           ) {
             debugLog(`🍬 ${modelName} list using cache`, queryKey);
-            return cachedItems.filter((item: any) => item !== null);
+            const parsedCachedItems = transformAwsJsonListOnRead(
+              cachedItems,
+              awsJsonConfig.fields,
+              awsJsonConfig.enabled
+            ) as T[];
+            queryClient.setQueryData(queryKey, parsedCachedItems);
+            return parsedCachedItems.filter((item: any) => item !== null);
           }
         }
 
@@ -953,11 +1102,16 @@ export function createAmplifyService<T extends BaseModel>(
           const items = (result?.items || result?.data || result || []).filter(
             (item: any) => item !== null
           );
+          const parsedItems = transformAwsJsonListOnRead(
+            items,
+            awsJsonConfig.fields,
+            awsJsonConfig.enabled
+          ) as T[];
 
           // Apply filter (if client-side filtering needed)
-          let filteredItems = items;
+          let filteredItems = parsedItems;
           if (options.filter) {
-            filteredItems = items.filter((item: T) => {
+            filteredItems = parsedItems.filter((item: T) => {
               return Object.entries(options.filter!).every(([key, value]) => {
                 if (typeof value === "object" && value !== null) {
                   // Ensure type safety when accessing item with key
@@ -1032,12 +1186,17 @@ export function createAmplifyService<T extends BaseModel>(
               result ||
               []
             ).filter((item: any) => item !== null);
+            const parsedItems = transformAwsJsonListOnRead(
+              items,
+              awsJsonConfig.fields,
+              awsJsonConfig.enabled
+            ) as T[];
 
             // Filter, cache update etc. remaining logic same
-            let filteredItems = items;
+            let filteredItems = parsedItems;
             if (options.filter) {
               // Filtering logic (same as before)
-              filteredItems = items.filter((item: T) => {
+              filteredItems = parsedItems.filter((item: T) => {
                 return Object.entries(options.filter!).every(([key, value]) => {
                   if (typeof value === "object" && value !== null) {
                     // Ensure type safety when accessing item with key
@@ -1128,6 +1287,11 @@ export function createAmplifyService<T extends BaseModel>(
         });
 
         const { id: itemId } = cleanedData; // Get id from cleanedData
+        const updatePayload = transformAwsJsonFieldsOnWrite(
+          cleanedData,
+          awsJsonConfig.fields,
+          awsJsonConfig.enabled
+        ) as Record<string, any>;
 
         // Find related query keys
         const relatedQueryKeys = findRelatedQueryKeys(modelName, queryClient);
@@ -1148,10 +1312,14 @@ export function createAmplifyService<T extends BaseModel>(
             itemId
           );
           const res = await (getClient().models as any)[modelName].update(
-            cleanedData,
+            updatePayload,
             authModeParams
           );
-          const updatedItem = (res as any)?.data;
+          const updatedItem = transformAwsJsonFieldsOnRead(
+            (res as any)?.data,
+            awsJsonConfig.fields,
+            awsJsonConfig.enabled
+          ) as T | null;
           const errors = (res as any)?.errors;
 
           if (updatedItem) {
@@ -1478,6 +1646,11 @@ export function createAmplifyService<T extends BaseModel>(
           }
         });
         cleanedData.id = data.id; // Preserve ID
+        const upsertPayload = transformAwsJsonFieldsOnWrite(
+          cleanedData,
+          awsJsonConfig.fields,
+          awsJsonConfig.enabled
+        ) as Record<string, any>;
 
         // Find related query keys
         const relatedQueryKeys = findRelatedQueryKeys(modelName, queryClient);
@@ -1499,10 +1672,14 @@ export function createAmplifyService<T extends BaseModel>(
               data.id
             );
             const res = await (getClient().models as any)[modelName].update(
-              cleanedData,
+              upsertPayload,
               authModeParams
             );
-            const updatedItem = (res as any)?.data;
+            const updatedItem = transformAwsJsonFieldsOnRead(
+              (res as any)?.data,
+              awsJsonConfig.fields,
+              awsJsonConfig.enabled
+            ) as T | null;
             const errors = (res as any)?.errors;
             if (updatedItem) {
               handleCacheUpdateOnSuccess(
@@ -1531,10 +1708,14 @@ export function createAmplifyService<T extends BaseModel>(
               data.id
             );
             const res = await (getClient().models as any)[modelName].create(
-              cleanedData,
+              upsertPayload,
               authModeParams
             );
-            const createdItem = (res as any)?.data;
+            const createdItem = transformAwsJsonFieldsOnRead(
+              (res as any)?.data,
+              awsJsonConfig.fields,
+              awsJsonConfig.enabled
+            ) as T | null;
             const errors = (res as any)?.errors;
             if (createdItem) {
               handleCacheUpdateOnSuccess(
@@ -1632,7 +1813,13 @@ export function createAmplifyService<T extends BaseModel>(
             !queryState?.isInvalidated
           ) {
             debugLog(`🍬 ${modelName} ${queryName} using cache`);
-            return cachedItems.filter((item: any) => item !== null);
+            const parsedCachedItems = transformAwsJsonListOnRead(
+              cachedItems,
+              awsJsonConfig.fields,
+              awsJsonConfig.enabled
+            ) as T[];
+            queryClient.setQueryData(queryKey, parsedCachedItems);
+            return parsedCachedItems.filter((item: any) => item !== null);
           }
         }
 
@@ -1669,7 +1856,11 @@ export function createAmplifyService<T extends BaseModel>(
         );
 
         // Filter null values
-        const filteredItems = items.filter((item: any) => item !== null);
+        const filteredItems = transformAwsJsonListOnRead(
+          items.filter((item: any) => item !== null),
+          awsJsonConfig.fields,
+          awsJsonConfig.enabled
+        ) as T[];
 
         // Update cache
         queryClient.setQueryData(queryKey, filteredItems);
@@ -2019,6 +2210,11 @@ export function createAmplifyService<T extends BaseModel>(
             const safeItems = Array.isArray(nextItems)
               ? nextItems.filter(Boolean)
               : [];
+            const parsedSafeItems = transformAwsJsonListOnRead(
+              safeItems,
+              awsJsonConfig.fields,
+              awsJsonConfig.enabled
+            ) as T[];
 
             const previousItems =
               hookQueryClient.getQueryData<T[]>(queryKey) || [];
@@ -2029,25 +2225,32 @@ export function createAmplifyService<T extends BaseModel>(
               setIsSynced(nextSynced);
             }
 
-            if (safeItems.length > 0) {
-              lastNonEmptyItemsRef.current = safeItems as T[];
+            if (parsedSafeItems.length > 0) {
+              lastNonEmptyItemsRef.current = parsedSafeItems as T[];
             }
 
             // ✅ Guard: if we're not synced yet and observeQuery emits an empty list,
             // do NOT clobber a previously non-empty cache.
-            if (!nextSynced && safeItems.length === 0 && previousItems.length > 0) {
+            if (
+              !nextSynced &&
+              parsedSafeItems.length === 0 &&
+              previousItems.length > 0
+            ) {
               return;
             }
 
             // Avoid cache thrash: observeQuery can emit repeatedly even when data didn't change.
             if (
-              areItemArraysEquivalentById(previousItems as any, safeItems as any)
+              areItemArraysEquivalentById(
+                previousItems as any,
+                parsedSafeItems as any
+              )
             ) {
               return;
             }
 
-            hookQueryClient.setQueryData(queryKey, safeItems);
-            safeItems.forEach((item: any) => {
+            hookQueryClient.setQueryData(queryKey, parsedSafeItems);
+            parsedSafeItems.forEach((item: any) => {
               if (item?.id) {
                 hookQueryClient.setQueryData(
                   itemKey(modelName, item.id),
@@ -2333,7 +2536,13 @@ export function createAmplifyService<T extends BaseModel>(
             const safeItems = Array.isArray(nextItems)
               ? nextItems.filter(Boolean)
               : [];
-            const nextItem = safeItems.find((entry: any) => entry?.id === id) || null;
+            const parsedSafeItems = transformAwsJsonListOnRead(
+              safeItems,
+              awsJsonConfig.fields,
+              awsJsonConfig.enabled
+            ) as T[];
+            const nextItem =
+              parsedSafeItems.find((entry: any) => entry?.id === id) || null;
 
             const nextSynced = Boolean(synced);
             if (lastSynced !== nextSynced) {
