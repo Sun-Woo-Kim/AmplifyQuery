@@ -1,3 +1,10 @@
+## [2.0.14](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.13...v2.0.14) (2026-02-11)
+
+
+### fix
+
+* json 직렬화 로직 ([](https://github.com/Sun-Woo-Kim/AmplifyQuery/commit/ecef5d8d7b946dac2c215bdeeb4d0aa519e0f925))
+
 ## [2.0.13](https://github.com/Sun-Woo-Kim/AmplifyQuery/compare/v2.0.12...v2.0.13) (2026-02-08)
 
 
